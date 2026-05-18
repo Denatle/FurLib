@@ -31,7 +31,7 @@ func (c *Client) SourceName() string {
 
 func NewClient(log *zap.Logger) *Client {
 	return &Client{log: log, e6Client: NewHTTPClient(Config{
-		AppName:           "FurLibrarer",
+		AppName:           "FurLib",
 		AppVersion:        "0.0.1",
 		Username:          viper.GetString("e621.username"),
 		APIKey:            viper.GetString("e621.api_key"),
