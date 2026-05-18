@@ -27,4 +27,6 @@ COPY --from=builder /app/furlib .
 VOLUME ["/app/data"]
 ENV DB_PATH=/app/data/furlib.db
 
+EXPOSE 8080
+
 CMD ["./furlib"]
