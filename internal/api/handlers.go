@@ -105,7 +105,7 @@ func (api *API) handleListDeleted(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	respond(w, http.StatusOK, map[string]any{"data": posts})
+	respond(w, http.StatusOK, posts)
 }
 
 func (api *API) handleClearDeleted(w http.ResponseWriter, r *http.Request) {

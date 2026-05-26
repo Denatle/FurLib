@@ -569,7 +569,7 @@ class DeletedTab(Widget):
     def _do_clear(self) -> None:
         try:
             result = api_delete("/api/v1/library/deleted") or {}
-            n = (result or {}).get("cleared", "?")
+            n = ((result or {}).get("data") or {}).get("cleared", "?")
             self.app.call_from_thread(self._populate, [])
             self.app.call_from_thread(
                 self.query_one("#deleted-status", Label).update,
