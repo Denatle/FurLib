@@ -23,9 +23,7 @@ RUN apk add --no-cache sqlite-libs ca-certificates tzdata
 WORKDIR /app
 COPY --from=builder /app/furlib .
 
-# Data volume for SQLite DB
 VOLUME ["/app/data"]
-ENV DB_PATH=/app/data/furlib.db
 
 EXPOSE 8080
 

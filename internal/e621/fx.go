@@ -1,7 +1,7 @@
 package e621
 
 import (
-	"FurLibrarer/internal/fetcher"
+	"FurLib/internal/fetcher"
 
 	"go.uber.org/fx"
 )

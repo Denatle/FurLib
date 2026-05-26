@@ -1,7 +1,8 @@
 package api
 
 import (
-	"FurLibrarer/internal/fetcher"
+	"FurLib/internal/dispatcher"
+	"FurLib/internal/librarian"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -10,14 +11,14 @@ import (
 )
 
 type API struct {
-	router *chi.Mux
-	log    *zap.Logger
-
-	fetcher *fetcher.Fetcher
+	router     *chi.Mux
+	log        *zap.Logger
+	dispatcher *dispatcher.Dispatcher
+	librarian  *librarian.Librarian
 }
 
-func NewAPI(log *zap.Logger, f *fetcher.Fetcher) *API {
-	a := &API{log: log, fetcher: f}
+func NewAPI(log *zap.Logger, d *dispatcher.Dispatcher, l *librarian.Librarian) *API {
+	a := &API{log: log, dispatcher: d, librarian: l}
 	a.router = a.buildRouter()
 	return a
 }
@@ -29,21 +30,27 @@ func (api *API) buildRouter() *chi.Mux {
 	r.Use(middleware.RealIP)
 	r.Use(api.zapLogger())
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
 
 	r.Get("/health", api.handleHealth)
 
-	r.Route("/api/v1", func(r chi.Router) {
-		r.Route("/library", func(r chi.Router) {
-			r.Get("/", api.handleSearch)
-			r.Get("/{id}", api.handleGetPost)
-		})
+	r.Get("/api/v1/stream", api.handleStream)
 
-		r.Route("/jobs", func(r chi.Router) {
-			r.Post("/", api.handleCreateJob)
-			r.Get("/", api.handleListJobs)
-			r.Get("/{id}", api.handleGetJob)
-			r.Delete("/{id}", api.handleCancelJob)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
+
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Route("/library", func(r chi.Router) {
+				r.Get("/", api.handleSearch)
+				r.Get("/{id}", api.handleGetPost)
+				r.Get("/{id}/file", api.handleGetFile)
+			})
+
+			r.Route("/jobs", func(r chi.Router) {
+				r.Post("/", api.handleCreateJob)
+				r.Get("/", api.handleListJobs)
+				r.Get("/{id}", api.handleGetJob)
+				r.Delete("/{id}", api.handleCancelJob)
+			})
 		})
 	})
 

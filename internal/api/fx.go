@@ -1,6 +1,7 @@
 package api
 
 import (
+	"FurLib/internal/config"
 	"context"
 	"errors"
 	"net/http"
@@ -14,8 +15,8 @@ var Module = fx.Module("api",
 	fx.Invoke(RegisterLifecycle),
 )
 
-func RegisterLifecycle(lc fx.Lifecycle, api *API) {
-	addr := "0.0.0.0:8080"
+func RegisterLifecycle(lc fx.Lifecycle, api *API, cfg config.APIConfig) {
+	addr := cfg.Addr
 	server := &http.Server{Addr: addr, Handler: api.router}
 
 	lc.Append(fx.Hook{

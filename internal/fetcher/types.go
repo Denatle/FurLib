@@ -3,19 +3,20 @@ package fetcher
 import "time"
 
 type MetaData struct {
-	ID          string
-	Source      string
-	Tags        []string
-	CreatedDate time.Time
-	Size        uint64
-	Width       uint16
-	Height      uint16
-	Filetype    string
-	Animated    bool
-	Duration    time.Duration
-	Sound       bool
-	Hash        string
-	Link        string
+	ID              string
+	Source          string
+	OriginalSources []string
+	Tags            []string
+	CreatedDate     time.Time
+	Size            uint64
+	Width           uint16
+	Height          uint16
+	Filetype        string
+	Animated        bool
+	Duration        time.Duration
+	Sound           bool
+	Hash            string
+	Link            string
 }
 
 type Media struct {

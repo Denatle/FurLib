@@ -1,9 +1,13 @@
 package main
 
 import (
-	"FurLibrarer/internal/api"
-	"FurLibrarer/internal/e621"
-	"FurLibrarer/internal/fetcher"
+	"FurLib/internal/api"
+	"FurLib/internal/archivator"
+	"FurLib/internal/config"
+	"FurLib/internal/dispatcher"
+	"FurLib/internal/e621"
+	"FurLib/internal/fetcher"
+	"FurLib/internal/librarian"
 
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -12,11 +16,13 @@ import (
 func main() {
 	fx.New(
 		fx.Provide(newZapLogger),
+		config.Module,
 		api.Module,
-
+		archivator.Module,
+		dispatcher.Module,
 		e621.Module,
-
 		fetcher.Module,
+		librarian.Module,
 	).Run()
 }
 

@@ -1,33 +1,32 @@
 package fetcher
 
 import (
+	"FurLib/internal/config"
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
-	"github.com/spf13/viper"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
-
-func init() {
-	viper.SetDefault("fetcher.workers", 5)
-	viper.SetDefault("fetcher.download_dir", "/data/tmp")
-}
 
 type Params struct {
 	fx.In
 
 	Logger  *zap.Logger
+	Cfg     config.FetcherConfig
 	Clients []Client `group:"clients"`
 }
 
 type Fetcher struct {
 	log     *zap.Logger
+	cfg     config.FetcherConfig
 	clients map[string]Client
 	http    *http.Client
 }
@@ -37,7 +36,30 @@ func NewFetcher(p Params) *Fetcher {
 	for _, c := range p.Clients {
 		m[c.SourceName()] = c
 	}
-	return &Fetcher{log: p.Logger, clients: m, http: &http.Client{}}
+	return &Fetcher{
+		log:     p.Logger,
+		cfg:     p.Cfg,
+		clients: m,
+		http: &http.Client{
+			Timeout: 2 * time.Minute,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return (&net.Dialer{
+						Timeout:   30 * time.Second,
+						KeepAlive: 30 * time.Second,
+					}).DialContext(ctx, "tcp4", addr)
+				},
+			},
+		},
+	}
+}
+
+func (f *Fetcher) Sources() []string {
+	names := make([]string, 0, len(f.clients))
+	for name := range f.clients {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (f *Fetcher) SearchByTags(source string, tags []string, limit int) ([]MetaData, error) {
@@ -59,19 +81,15 @@ type Result struct {
 	Err   error
 }
 
-// TODO:
-func (f *Fetcher) downloadAll(ctx context.Context, metas []MetaData) <-chan Result {
+func (f *Fetcher) DownloadAll(ctx context.Context, metas []MetaData) <-chan Result {
 	results := make(chan Result, len(metas))
-	workers := viper.GetInt("fetcher.workers")
-	sem := make(chan struct{}, workers)
+	sem := make(chan struct{}, f.cfg.Workers)
 
 	go func() {
 		var wg sync.WaitGroup
 		for _, meta := range metas {
-			select {
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				break
-			default:
 			}
 
 			wg.Add(1)
@@ -87,7 +105,7 @@ func (f *Fetcher) downloadAll(ctx context.Context, metas []MetaData) <-chan Resu
 						zap.String("source", m.Source),
 						zap.Error(err),
 					)
-					results <- Result{Err: err}
+					results <- Result{Err: err, Media: Media{Meta: m}}
 					return
 				}
 				results <- Result{Media: Media{Path: path, Meta: m}}
@@ -100,7 +118,6 @@ func (f *Fetcher) downloadAll(ctx context.Context, metas []MetaData) <-chan Resu
 	return results
 }
 
-// TODO:
 func (f *Fetcher) download(ctx context.Context, meta MetaData) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meta.Link, nil)
 	if err != nil {
@@ -112,14 +129,16 @@ func (f *Fetcher) download(ctx context.Context, meta MetaData) (string, error) {
 		return "", err
 	}
 	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
+		if err := Body.Close(); err != nil {
 			f.log.Error("failed to close response body", zap.Error(err))
 		}
 	}(resp.Body)
 
-	dir := viper.GetString("fetcher.download_dir")
-	path := filepath.Join(dir, meta.Source, meta.ID+"."+meta.Filetype)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	path := filepath.Join(f.cfg.DownloadDir, meta.Source, meta.ID+"."+meta.Filetype)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", err
@@ -130,8 +149,7 @@ func (f *Fetcher) download(ctx context.Context, meta MetaData) (string, error) {
 		return "", err
 	}
 	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
+		if err := file.Close(); err != nil {
 			f.log.Warn("failed to close file")
 		}
 	}(file)
