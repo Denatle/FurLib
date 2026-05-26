@@ -4,6 +4,7 @@ import (
 	"FurLib/internal/fetcher"
 	"context"
 	"fmt"
+	"os"
 
 	"go.uber.org/zap"
 )
@@ -19,51 +20,91 @@ func NewHealer(repo *Repository, f *fetcher.Fetcher, log *zap.Logger) *Healer {
 }
 
 type HealthReport struct {
-	Total      int    `json:"total"`
-	Healthy    int    `json:"healthy"`
-	Missing    int    `json:"missing"`
-	MissingIDs []uint `json:"missing_ids,omitempty"`
+	Total        int    `json:"total"`
+	Healthy      int    `json:"healthy"`
+	Missing      int    `json:"missing"`
+	MissingIDs   []uint `json:"missing_ids,omitempty"`
+	Corrupted    int    `json:"corrupted"`
+	CorruptedIDs []uint `json:"corrupted_ids,omitempty"`
 }
 
 type HealReport struct {
-	Missing int `json:"missing"`
-	Healed  int `json:"healed"`
-	Failed  int `json:"failed"`
+	Missing   int `json:"missing"`
+	Corrupted int `json:"corrupted"`
+	Healed    int `json:"healed"`
+	Failed    int `json:"failed"`
 }
 
 func (h *Healer) Check() (HealthReport, error) {
-	missing, err := h.repo.FindMissing()
-	if err != nil {
-		return HealthReport{}, fmt.Errorf("find missing: %w", err)
-	}
-
 	all, err := h.repo.FindAll()
 	if err != nil {
 		return HealthReport{}, fmt.Errorf("find all: %w", err)
 	}
 
-	ids := make([]uint, 0, len(missing))
-	for _, p := range missing {
-		ids = append(ids, p.ID)
+	var missingIDs, corruptedIDs []uint
+
+	for _, p := range all {
+		if _, err := os.Stat(p.FilePath); os.IsNotExist(err) {
+			missingIDs = append(missingIDs, p.ID)
+			continue
+		}
+		if p.LocalHash != "" {
+			hash, err := computeMD5(p.FilePath)
+			if err != nil {
+				h.log.Warn("check: md5 failed", zap.Uint("id", p.ID), zap.Error(err))
+				continue
+			}
+			if hash != p.LocalHash {
+				corruptedIDs = append(corruptedIDs, p.ID)
+			}
+		}
 	}
 
 	return HealthReport{
-		Total:      len(all),
-		Healthy:    len(all) - len(missing),
-		Missing:    len(missing),
-		MissingIDs: ids,
+		Total:        len(all),
+		Healthy:      len(all) - len(missingIDs) - len(corruptedIDs),
+		Missing:      len(missingIDs),
+		MissingIDs:   missingIDs,
+		Corrupted:    len(corruptedIDs),
+		CorruptedIDs: corruptedIDs,
 	}, nil
 }
 
 func (h *Healer) Heal(ctx context.Context) (HealReport, error) {
-	missing, err := h.repo.FindMissing()
+	all, err := h.repo.FindAll()
 	if err != nil {
-		return HealReport{}, fmt.Errorf("find missing: %w", err)
+		return HealReport{}, fmt.Errorf("find all: %w", err)
 	}
 
-	report := HealReport{Missing: len(missing)}
+	var toHeal []*Post
+	var report HealReport
 
-	for _, post := range missing {
+	for _, p := range all {
+		if _, err := os.Stat(p.FilePath); os.IsNotExist(err) {
+			report.Missing++
+			toHeal = append(toHeal, p)
+			continue
+		}
+		if p.LocalHash != "" {
+			hash, err := computeMD5(p.FilePath)
+			if err != nil {
+				h.log.Warn("heal: md5 check failed", zap.Uint("id", p.ID), zap.Error(err))
+				continue
+			}
+			if hash != p.LocalHash {
+				h.log.Info("heal: corrupted file detected",
+					zap.Uint("id", p.ID),
+					zap.String("post_id", p.PostID),
+					zap.String("expected", p.LocalHash),
+					zap.String("got", hash),
+				)
+				report.Corrupted++
+				toHeal = append(toHeal, p)
+			}
+		}
+	}
+
+	for _, post := range toHeal {
 		if ctx.Err() != nil {
 			break
 		}
@@ -97,7 +138,6 @@ func (h *Healer) Heal(ctx context.Context) (HealReport, error) {
 				continue
 			}
 
-			// verify MD5 against the original hash from the source
 			if meta.Hash != "" && localHash != meta.Hash {
 				h.log.Warn("heal: md5 mismatch",
 					zap.String("post_id", post.PostID),

@@ -2,18 +2,28 @@ package librarian
 
 import (
 	"FurLib/internal/archivator"
+	"context"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type Librarian struct {
-	repo *archivator.Repository
-	log  *zap.Logger
+	repo   *archivator.Repository
+	healer *archivator.Healer
+	log    *zap.Logger
 }
 
-func NewLibrarian(repo *archivator.Repository, log *zap.Logger) *Librarian {
-	return &Librarian{repo: repo, log: log}
+func NewLibrarian(repo *archivator.Repository, healer *archivator.Healer, log *zap.Logger) *Librarian {
+	return &Librarian{repo: repo, healer: healer, log: log}
+}
+
+func (l *Librarian) Check() (archivator.HealthReport, error) {
+	return l.healer.Check()
+}
+
+func (l *Librarian) Heal(ctx context.Context) (archivator.HealReport, error) {
+	return l.healer.Heal(ctx)
 }
 
 var sortScopes = map[string]func(*gorm.DB) *gorm.DB{

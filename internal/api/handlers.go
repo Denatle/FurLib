@@ -116,7 +116,7 @@ func (api *API) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) handleLibraryHealth(w http.ResponseWriter, r *http.Request) {
-	report, err := api.healer.Check()
+	report, err := api.librarian.Check()
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err)
 		return
@@ -125,7 +125,7 @@ func (api *API) handleLibraryHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) handleLibraryHeal(w http.ResponseWriter, r *http.Request) {
-	report, err := api.healer.Heal(r.Context())
+	report, err := api.librarian.Heal(r.Context())
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err)
 		return

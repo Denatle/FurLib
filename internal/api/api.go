@@ -1,7 +1,6 @@
 package api
 
 import (
-	"FurLib/internal/archivator"
 	"FurLib/internal/dispatcher"
 	"FurLib/internal/librarian"
 	"time"
@@ -16,11 +15,10 @@ type API struct {
 	log        *zap.Logger
 	dispatcher *dispatcher.Dispatcher
 	librarian  *librarian.Librarian
-	healer     *archivator.Healer
 }
 
-func NewAPI(log *zap.Logger, d *dispatcher.Dispatcher, l *librarian.Librarian, h *archivator.Healer) *API {
-	a := &API{log: log, dispatcher: d, librarian: l, healer: h}
+func NewAPI(log *zap.Logger, d *dispatcher.Dispatcher, l *librarian.Librarian) *API {
+	a := &API{log: log, dispatcher: d, librarian: l}
 	a.router = a.buildRouter()
 	return a
 }

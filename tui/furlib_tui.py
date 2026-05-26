@@ -570,14 +570,20 @@ class HealthTab(Widget):
         self.app.call_from_thread(self._show_health, report)
 
     def _show_health(self, r: dict) -> None:
-        total, healthy, missing = r.get("total", 0), r.get("healthy", 0), r.get("missing", 0)
-        ids = r.get("missing_ids") or []
-        c = "green" if missing == 0 else "red"
-        txt = (f"[b]Total:[/b]   {total}\n"
-               f"[b]Healthy:[/b] [green]{healthy}[/green]\n"
-               f"[b]Missing:[/b] [{c}]{missing}[/{c}]")
-        if ids:
-            txt += f"\n[dim]IDs: {ids}[/dim]"
+        total     = r.get("total", 0)
+        healthy   = r.get("healthy", 0)
+        missing   = r.get("missing", 0)
+        corrupted = r.get("corrupted", 0)
+        mc = "green" if missing   == 0 else "red"
+        cc = "green" if corrupted == 0 else "yellow"
+        txt = (f"[b]Total:[/b]     {total}\n"
+               f"[b]Healthy:[/b]   [green]{healthy}[/green]\n"
+               f"[b]Missing:[/b]   [{mc}]{missing}[/{mc}]\n"
+               f"[b]Corrupted:[/b] [{cc}]{corrupted}[/{cc}]")
+        if ids := r.get("missing_ids"):
+            txt += f"\n[dim]Missing IDs:   {ids}[/dim]"
+        if ids := r.get("corrupted_ids"):
+            txt += f"\n[dim]Corrupted IDs: {ids}[/dim]"
         self.query_one("#health-report", Static).update(txt)
         self.query_one("#heal-report",   Static).update("")
 
@@ -602,10 +608,14 @@ class HealthTab(Widget):
         btn.disabled = v
 
     def _show_heal(self, r: dict) -> None:
-        missing, healed, failed = r.get("missing", 0), r.get("healed", 0), r.get("failed", 0)
+        missing   = r.get("missing", 0)
+        corrupted = r.get("corrupted", 0)
+        healed    = r.get("healed", 0)
+        failed    = r.get("failed", 0)
         fc = "red" if failed else "green"
         self.query_one("#heal-report", Static).update(
-            f"\n[b]Heal:[/b]  missing={missing}  [green]healed={healed}[/green]  [{fc}]failed={failed}[/{fc}]"
+            f"\n[b]Heal:[/b]  missing={missing}  corrupted={corrupted}"
+            f"  [green]healed={healed}[/green]  [{fc}]failed={failed}[/{fc}]"
         )
 
 
