@@ -63,11 +63,13 @@ func (api *API) handleGetFile(w http.ResponseWriter, r *http.Request) {
 }
 
 type createJobRequest struct {
-	Tags      []string   `json:"tags"`
-	Limit     int        `json:"limit"`
-	Sources   []string   `json:"sources,omitempty"`
-	NewerThan *time.Time `json:"newer_than,omitempty"`
-	OlderThan *time.Time `json:"older_than,omitempty"`
+	Tags       []string            `json:"tags"`
+	Author     string              `json:"author,omitempty"`
+	SourceTags map[string][]string `json:"source_tags,omitempty"`
+	Limit      int                 `json:"limit"`
+	Sources    []string            `json:"sources,omitempty"`
+	NewerThan  *time.Time          `json:"newer_than,omitempty"`
+	OlderThan  *time.Time          `json:"older_than,omitempty"`
 }
 
 func (api *API) handleCreateJob(w http.ResponseWriter, r *http.Request) {
@@ -78,9 +80,11 @@ func (api *API) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := dispatcher.Options{
-		Sources:   req.Sources,
-		NewerThan: req.NewerThan,
-		OlderThan: req.OlderThan,
+		Sources:    req.Sources,
+		Author:     req.Author,
+		SourceTags: req.SourceTags,
+		NewerThan:  req.NewerThan,
+		OlderThan:  req.OlderThan,
 	}
 
 	id, err := api.dispatcher.Submit(req.Tags, req.Limit, opts)
@@ -151,7 +155,9 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := dispatcher.Options{
-		Sources: parseCommaSeparated(r.URL.Query().Get("sources")),
+		Sources:    parseCommaSeparated(r.URL.Query().Get("sources")),
+		Author:     r.URL.Query().Get("author"),
+		SourceTags: parseSourceTags(r.URL.Query().Get("source_tags")),
 	}
 	if s := r.URL.Query().Get("newer_than"); s != "" {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
@@ -176,6 +182,19 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
+}
+
+// parseSourceTags parses a JSON-encoded map[string][]string from a query param.
+// Example: {"e621":["order:score","-animated"],"gelbooru":["sort:score"]}
+func parseSourceTags(s string) map[string][]string {
+	if s == "" {
+		return nil
+	}
+	var m map[string][]string
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 func parseCommaSeparated(s string) []string {

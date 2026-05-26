@@ -38,6 +38,28 @@ _PREVIEW_WIDTH              = 42
 _BAR_WIDTH                  = 28   # fixed progress bar character width
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _parse_source_tags(raw: str) -> dict:
+    """Parse 'e621:order:score -animated; gelbooru:sort:score' into a dict."""
+    result = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        source, _, tags_raw = part.partition(":")
+        source = source.strip()
+        tags   = tags_raw.strip().split()
+        if source and tags:
+            result[source] = tags
+    return result
+
+
+def _fmt_source_tags(st: dict) -> str:
+    """Inverse of _parse_source_tags."""
+    return "; ".join(f"{src}:{' '.join(tags)}" for src, tags in st.items())
+
+
 # ── API helpers ────────────────────────────────────────────────────────────────
 
 def api_get(path: str, params: dict | None = None) -> dict:
@@ -343,17 +365,20 @@ class NewJobModal(ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Container(id="modal-container"):
             yield Static("[b]New Download Job[/b]", id="modal-title")
+            yield Input(placeholder="author (artist tag, e.g. kenket)", id="job-author")
             yield Input(placeholder="tags (e.g. fox rating:safe)", id="job-tags")
             yield Input(placeholder="limit per source (default 20)", id="job-limit", value="20")
             yield Input(placeholder="sources (comma sep., empty = all)", id="job-sources")
+            yield Input(placeholder='per-source tags  e.g. e621:order:score -animated', id="job-source-tags")
             with Horizontal(id="modal-buttons"):
                 yield Button("Create", variant="primary", id="create-btn")
                 yield Button("Cancel", variant="default", id="cancel-btn")
 
     @on(Button.Pressed, "#create-btn")
     def do_create(self) -> None:
-        tags_raw = self.query_one("#job-tags", Input).value.strip()
-        tags     = tags_raw.split() if tags_raw else ["fox"]
+        author   = self.query_one("#job-author", Input).value.strip()
+        tags_raw = self.query_one("#job-tags",   Input).value.strip()
+        tags     = tags_raw.split() if tags_raw else []
         try:
             limit = int(self.query_one("#job-limit", Input).value or "20")
         except ValueError:
@@ -361,8 +386,13 @@ class NewJobModal(ModalScreen[dict | None]):
         sources_raw = self.query_one("#job-sources", Input).value.strip()
         sources     = [s.strip() for s in sources_raw.split(",") if s.strip()]
         payload: dict = {"tags": tags, "limit": limit}
+        if author:
+            payload["author"] = author
         if sources:
             payload["sources"] = sources
+        st = _parse_source_tags(self.query_one("#job-source-tags", Input).value)
+        if st:
+            payload["source_tags"] = st
         self.dismiss(payload)
 
     @on(Button.Pressed, "#cancel-btn")
@@ -478,25 +508,32 @@ class JobsTab(Widget):
 
     def submit_preset(self, preset: dict) -> None:
         payload: dict = {"tags": preset.get("tags", []), "limit": preset.get("limit", 20)}
+        if preset.get("author"):
+            payload["author"] = preset["author"]
         if sources := preset.get("sources"):
             payload["sources"] = sources
+        if st := preset.get("source_tags"):
+            payload["source_tags"] = st
         self._submit(payload)
 
     @work(thread=True)
     def _submit(self, payload: dict) -> None:
         import uuid as _uuid
+        author  = payload.get("author", "")
         tags    = payload.get("tags", [])
         sources = payload.get("sources", [])
+        label   = author if author else " ".join(tags)
         rk = f"stream-{_uuid.uuid4().hex[:8]}"
         s: dict = {
             "done": 0, "total": 0, "failed": 0,
             "spin_idx": 0, "active": True,
-            "tags_str": " ".join(tags)[:28],
+            "tags_str": label[:28],
             "created":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         }
         self._streams[rk] = s
         self.app.call_from_thread(self._insert_stub, rk, s)
-        self._stream(tags, payload.get("limit", 20), sources, rk)
+        self._stream(tags, payload.get("limit", 20), sources, author,
+                     payload.get("source_tags", {}), rk)
 
     def _insert_stub(self, rk: str, s: dict) -> None:
         self._add_stub(self.query_one("#jobs-table", DataTable), rk, s)
@@ -522,11 +559,16 @@ class JobsTab(Widget):
         self.load_jobs()
 
     @work(thread=True)
-    def _stream(self, tags: list[str], limit: int, sources: list[str], rk: str) -> None:
+    def _stream(self, tags: list[str], limit: int, sources: list[str],
+                author: str, source_tags: dict, rk: str) -> None:
         s = self._streams[rk]
         params: dict = {"tags": "+".join(tags), "limit": str(limit)}
+        if author:
+            params["author"] = author
         if sources:
             params["sources"] = ",".join(sources)
+        if source_tags:
+            params["source_tags"] = json.dumps(source_tags, separators=(",", ":"))
 
         def set_final(status: str) -> None:
             color = STATUS_COLOR.get(status, "white")
@@ -596,15 +638,19 @@ class PresetsTab(Widget):
                     yield Button("▶▶ Run All [a]", variant="success", id="run-all-btn")
             with Vertical(id="preset-form-panel"):
                 yield Static("[b]Preset details[/b]", id="form-title")
-                yield Label("Name",                            classes="form-label")
-                yield Input(placeholder="My fox collection",   id="preset-name")
-                yield Label("Tags (space separated)",          classes="form-label")
-                yield Input(placeholder="fox rating:safe",     id="preset-tags")
+                yield Label("Name",                              classes="form-label")
+                yield Input(placeholder="My fox collection",     id="preset-name")
+                yield Label("Author (artist tag)",               classes="form-label")
+                yield Input(placeholder="kenket",                id="preset-author")
+                yield Label("Tags (space separated)",            classes="form-label")
+                yield Input(placeholder="fox rating:safe",       id="preset-tags")
                 yield Label("Sources (comma sep., empty = all)", classes="form-label")
-                yield Input(placeholder="e621, gelbooru",      id="preset-sources")
-                yield Label("Limit per source",                    classes="form-label")
-                yield Input(placeholder="20", value="20",      id="preset-limit")
-                yield Button("Save", variant="primary",        id="save-preset-btn")
+                yield Input(placeholder="e621, gelbooru",        id="preset-sources")
+                yield Label("Per-source tags  e.g. e621:order:score -animated", classes="form-label")
+                yield Input(placeholder="e621:order:score; gelbooru:sort:score", id="preset-source-tags")
+                yield Label("Limit per source",                  classes="form-label")
+                yield Input(placeholder="20", value="20",        id="preset-limit")
+                yield Button("Save", variant="primary",          id="save-preset-btn")
                 yield Label("", id="preset-status")
 
     def on_mount(self) -> None:
@@ -650,22 +696,31 @@ class PresetsTab(Widget):
             self._fill_form(self._presets[idx])
 
     def _fill_form(self, p: dict) -> None:
-        self.query_one("#preset-name",    Input).value = p.get("name", "")
-        self.query_one("#preset-tags",    Input).value = " ".join(p.get("tags", []))
-        self.query_one("#preset-sources", Input).value = ", ".join(p.get("sources", []))
-        self.query_one("#preset-limit",   Input).value = str(p.get("limit", 20))
-        self.query_one("#preset-status",  Label).update("")
+        self.query_one("#preset-name",        Input).value = p.get("name", "")
+        self.query_one("#preset-author",      Input).value = p.get("author", "")
+        self.query_one("#preset-tags",        Input).value = " ".join(p.get("tags", []))
+        self.query_one("#preset-sources",     Input).value = ", ".join(p.get("sources", []))
+        self.query_one("#preset-source-tags", Input).value = _fmt_source_tags(p.get("source_tags", {}))
+        self.query_one("#preset-limit",       Input).value = str(p.get("limit", 20))
+        self.query_one("#preset-status",      Label).update("")
 
     def _form_to_dict(self) -> dict:
-        name    = self.query_one("#preset-name",    Input).value.strip()
-        tags    = self.query_one("#preset-tags",    Input).value.strip().split()
-        raw_src = self.query_one("#preset-sources", Input).value.strip()
+        name    = self.query_one("#preset-name",        Input).value.strip()
+        author  = self.query_one("#preset-author",      Input).value.strip()
+        tags    = self.query_one("#preset-tags",        Input).value.strip().split()
+        raw_src = self.query_one("#preset-sources",     Input).value.strip()
         sources = [s.strip() for s in raw_src.split(",") if s.strip()]
+        st      = _parse_source_tags(self.query_one("#preset-source-tags", Input).value)
         try:
             limit = int(self.query_one("#preset-limit", Input).value or "20")
         except ValueError:
             limit = 20
-        return {"name": name, "tags": tags, "sources": sources, "limit": limit}
+        d: dict = {"name": name, "tags": tags, "sources": sources, "limit": limit}
+        if author:
+            d["author"] = author
+        if st:
+            d["source_tags"] = st
+        return d
 
     # ── actions ────────────────────────────────────────────────────────────────
 
@@ -686,7 +741,8 @@ class PresetsTab(Widget):
 
     def action_new_preset(self) -> None:
         self._selected = -1
-        for fid in ("#preset-name", "#preset-tags", "#preset-sources"):
+        for fid in ("#preset-name", "#preset-author", "#preset-tags",
+                    "#preset-sources", "#preset-source-tags"):
             self.query_one(fid, Input).value = ""
         self.query_one("#preset-limit",  Input).value = "20"
         self.query_one("#preset-status", Label).update("")
