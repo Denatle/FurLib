@@ -1,6 +1,7 @@
 package api
 
 import (
+	"FurLib/internal/archivator"
 	"FurLib/internal/dispatcher"
 	"FurLib/internal/librarian"
 	"time"
@@ -15,10 +16,11 @@ type API struct {
 	log        *zap.Logger
 	dispatcher *dispatcher.Dispatcher
 	librarian  *librarian.Librarian
+	healer     *archivator.Healer
 }
 
-func NewAPI(log *zap.Logger, d *dispatcher.Dispatcher, l *librarian.Librarian) *API {
-	a := &API{log: log, dispatcher: d, librarian: l}
+func NewAPI(log *zap.Logger, d *dispatcher.Dispatcher, l *librarian.Librarian, h *archivator.Healer) *API {
+	a := &API{log: log, dispatcher: d, librarian: l, healer: h}
 	a.router = a.buildRouter()
 	return a
 }
@@ -41,6 +43,8 @@ func (api *API) buildRouter() *chi.Mux {
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Route("/library", func(r chi.Router) {
 				r.Get("/", api.handleSearch)
+				r.Get("/health", api.handleLibraryHealth)
+				r.Post("/heal", api.handleLibraryHeal)
 				r.Get("/{id}", api.handleGetPost)
 				r.Get("/{id}/file", api.handleGetFile)
 			})

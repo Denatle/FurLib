@@ -16,8 +16,7 @@ type Dispatcher struct {
 	log        *zap.Logger
 	fetcher    *fetcher.Fetcher
 	archivator *archivator.Archivator
-	mu         sync.RWMutex
-	jobs       map[string]*Job
+	jobs       sync.Map
 }
 
 func NewDispatcher(log *zap.Logger, f *fetcher.Fetcher, a *archivator.Archivator) *Dispatcher {
@@ -25,7 +24,6 @@ func NewDispatcher(log *zap.Logger, f *fetcher.Fetcher, a *archivator.Archivator
 		log:        log,
 		fetcher:    f,
 		archivator: a,
-		jobs:       make(map[string]*Job),
 	}
 }
 
@@ -68,9 +66,7 @@ func (d *Dispatcher) Submit(tags []string, limit int, opts Options) (string, err
 		cancel:    cancel,
 	}
 
-	d.mu.Lock()
-	d.jobs[job.ID] = job
-	d.mu.Unlock()
+	d.jobs.Store(job.ID, job)
 
 	go d.run(ctx, job)
 
@@ -80,9 +76,7 @@ func (d *Dispatcher) Submit(tags []string, limit int, opts Options) (string, err
 func (d *Dispatcher) run(ctx context.Context, job *Job) {
 	defer job.cancel()
 
-	d.mu.Lock()
-	job.Status = StatusRunning
-	d.mu.Unlock()
+	job.setStatus(StatusRunning)
 
 	opts := Options{NewerThan: job.NewerThan, OlderThan: job.OlderThan}
 
@@ -98,19 +92,14 @@ func (d *Dispatcher) run(ctx context.Context, job *Job) {
 		}
 
 		metas = filterByDate(metas, opts)
-
-		d.mu.Lock()
-		job.Total += len(metas)
-		d.mu.Unlock()
+		job.addTotal(len(metas))
 
 		for result := range d.fetcher.DownloadAll(ctx, metas) {
-			d.mu.Lock()
 			if result.Err != nil {
-				job.Failed++
+				job.incFailed()
 			} else {
-				job.Done++
+				job.incDone()
 			}
-			d.mu.Unlock()
 
 			if result.Err == nil {
 				if err := d.archivator.Archive(result.Media); err != nil {
@@ -120,13 +109,11 @@ func (d *Dispatcher) run(ctx context.Context, job *Job) {
 		}
 	}
 
-	d.mu.Lock()
 	if ctx.Err() != nil {
-		job.Status = StatusCancelled
+		job.setStatus(StatusCancelled)
 	} else {
-		job.Status = StatusDone
+		job.setStatus(StatusDone)
 	}
-	d.mu.Unlock()
 }
 
 func (d *Dispatcher) Stream(ctx context.Context, tags []string, limit int, opts Options) <-chan Event {
@@ -156,13 +143,15 @@ func (d *Dispatcher) Stream(ctx context.Context, tags []string, limit int, opts 
 				if result.Err != nil {
 					totalFailed++
 					events <- Event{Type: EventFailed, Source: source, PostID: result.Media.Meta.ID, Error: result.Err.Error()}
-				} else {
-					totalDone++
-					if err := d.archivator.Archive(result.Media); err != nil {
-						d.log.Warn("archive failed", zap.String("post_id", result.Media.Meta.ID), zap.Error(err))
-					}
-					events <- Event{Type: EventDownloaded, Source: source, PostID: result.Media.Meta.ID}
+					continue
 				}
+
+				totalDone++
+				if err := d.archivator.Archive(result.Media); err != nil {
+					d.log.Warn("archive failed", zap.String("post_id", result.Media.Meta.ID), zap.Error(err))
+				}
+				events <- Event{Type: EventDownloaded, Source: source, PostID: result.Media.Meta.ID}
+
 			}
 		}
 
@@ -185,37 +174,28 @@ func (d *Dispatcher) Search(tags []string, limit int) ([]fetcher.MetaData, error
 	return all, nil
 }
 
-func (d *Dispatcher) GetJob(id string) (*Job, error) {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	job, ok := d.jobs[id]
+func (d *Dispatcher) GetJob(id string) (JobSnapshot, error) {
+	v, ok := d.jobs.Load(id)
 	if !ok {
-		return nil, fmt.Errorf("job not found: %s", id)
+		return JobSnapshot{}, fmt.Errorf("job not found: %s", id)
 	}
-	return job, nil
+	return v.(*Job).Snapshot(), nil
 }
 
-func (d *Dispatcher) ListJobs() []*Job {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
-	jobs := make([]*Job, 0, len(d.jobs))
-	for _, j := range d.jobs {
-		jobs = append(jobs, j)
-	}
+func (d *Dispatcher) ListJobs() []JobSnapshot {
+	jobs := make([]JobSnapshot, 0)
+	d.jobs.Range(func(_, v any) bool {
+		jobs = append(jobs, v.(*Job).Snapshot())
+		return true
+	})
 	return jobs
 }
 
 func (d *Dispatcher) CancelJob(id string) error {
-	d.mu.RLock()
-	job, ok := d.jobs[id]
-	d.mu.RUnlock()
-
+	v, ok := d.jobs.Load(id)
 	if !ok {
 		return fmt.Errorf("job not found: %s", id)
 	}
-
-	job.cancel()
+	v.(*Job).cancel()
 	return nil
 }

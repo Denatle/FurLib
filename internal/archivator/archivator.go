@@ -44,6 +44,7 @@ func (a *Archivator) Archive(media fetcher.Media) error {
 		SourceHash:      media.Meta.Hash,
 		LocalHash:       localHash,
 		FilePath:        media.Path,
+		Score:           media.Meta.Score,
 	}
 
 	if err := a.repo.Save(post); err != nil {

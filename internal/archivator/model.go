@@ -24,4 +24,5 @@ type Post struct {
 	SourceHash      string
 	LocalHash       string
 	FilePath        string
+	Score           int
 }

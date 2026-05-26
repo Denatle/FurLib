@@ -4,6 +4,7 @@ import (
 	"FurLib/internal/config"
 	"FurLib/internal/fetcher"
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -68,7 +69,15 @@ func (c *Client) Search(tags []string, limit int) ([]fetcher.MetaData, error) {
 }
 
 func (c *Client) PostByID(id string) (fetcher.MetaData, error) {
-	panic("implement me")
+	var resp PostResponse
+	if err := c.e6Client.Do(context.Background(), http.MethodGet, "/posts/"+id+".json", nil, nil, &resp); err != nil {
+		return fetcher.MetaData{}, fmt.Errorf("fetch post: %w", err)
+	}
+	posts := FlattenPosts(PostsResponse{Posts: []Post{resp.Post}})
+	if len(posts) == 0 {
+		return fetcher.MetaData{}, fmt.Errorf("post not found: %s", id)
+	}
+	return posts[0], nil
 }
 
 func FlattenPosts(resp PostsResponse) []fetcher.MetaData {
@@ -115,6 +124,7 @@ func FlattenPosts(resp PostsResponse) []fetcher.MetaData {
 			Sound:           sound,
 			Hash:            post.File.MD5,
 			Link:            post.File.URL,
+			Score:           post.Score.Total,
 		})
 	}
 

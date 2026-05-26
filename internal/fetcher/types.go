@@ -17,6 +17,7 @@ type MetaData struct {
 	Sound           bool
 	Hash            string
 	Link            string
+	Score           int
 }
 
 type Media struct {

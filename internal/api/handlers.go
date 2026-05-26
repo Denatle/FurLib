@@ -17,12 +17,16 @@ func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) handleSearch(w http.ResponseWriter, r *http.Request) {
-	tags := strings.Split(r.URL.Query().Get("tags"), "+")
+	var tags []string
+	if raw := r.URL.Query().Get("tags"); raw != "" {
+		tags = strings.Split(raw, "+")
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = 20
 	}
-	data, err := api.librarian.Search(tags, limit)
+	sort := r.URL.Query().Get("sort")
+	data, err := api.librarian.Search(tags, limit, sort)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err)
 		return
@@ -109,6 +113,24 @@ func (api *API) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, nil)
+}
+
+func (api *API) handleLibraryHealth(w http.ResponseWriter, r *http.Request) {
+	report, err := api.healer.Check()
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	respond(w, http.StatusOK, report)
+}
+
+func (api *API) handleLibraryHeal(w http.ResponseWriter, r *http.Request) {
+	report, err := api.healer.Heal(r.Context())
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	respond(w, http.StatusOK, report)
 }
 
 func (api *API) handleListSources(w http.ResponseWriter, r *http.Request) {

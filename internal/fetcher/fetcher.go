@@ -62,6 +62,14 @@ func (f *Fetcher) Sources() []string {
 	return names
 }
 
+func (f *Fetcher) PostByID(source, id string) (MetaData, error) {
+	client, ok := f.clients[source]
+	if !ok {
+		return MetaData{}, fmt.Errorf("unknown source: %s", source)
+	}
+	return client.PostByID(id)
+}
+
 func (f *Fetcher) SearchByTags(source string, tags []string, limit int) ([]MetaData, error) {
 	client, ok := f.clients[source]
 	if !ok {
@@ -95,7 +103,12 @@ func (f *Fetcher) DownloadAll(ctx context.Context, metas []MetaData) <-chan Resu
 			wg.Add(1)
 			go func(m MetaData) {
 				defer wg.Done()
-				sem <- struct{}{}
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					results <- Result{Err: ctx.Err(), Media: Media{Meta: m}}
+					return
+				}
 				defer func() { <-sem }()
 
 				path, err := f.download(ctx, m)
@@ -148,12 +161,13 @@ func (f *Fetcher) download(ctx context.Context, meta MetaData) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func(file *os.File) {
-		if err := file.Close(); err != nil {
-			f.log.Warn("failed to close file")
-		}
-	}(file)
-
-	_, err = io.Copy(file, resp.Body)
-	return path, err
+	_, copyErr := io.Copy(file, resp.Body)
+	if closeErr := file.Close(); closeErr != nil {
+		f.log.Warn("failed to close file", zap.Error(closeErr))
+	}
+	if copyErr != nil {
+		_ = os.Remove(path)
+		return "", copyErr
+	}
+	return path, nil
 }

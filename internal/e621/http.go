@@ -21,6 +21,10 @@ type PostsResponse struct {
 	Posts []Post `json:"posts"`
 }
 
+type PostResponse struct {
+	Post Post `json:"post"`
+}
+
 type Post struct {
 	ID          int       `json:"id"`
 	Description string    `json:"description"`
