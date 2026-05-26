@@ -590,7 +590,7 @@ class JobsTab(Widget):
         rk = f"stream-{_uuid.uuid4().hex[:8]}"
         s: dict = {
             "done": 0, "total": 0, "failed": 0,
-            "spin_idx": 0, "active": True,
+            "spin_idx": 0, "active": True, "cancelled": False, "resp": None,
             "tags_str": label[:28],
             "created":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -608,7 +608,17 @@ class JobsTab(Widget):
             return
         rk, _ = t.coordinate_to_cell_key((t.cursor_row, 0))
         job_id = str(rk.value)
-        if not job_id.startswith("stream-"):
+        if job_id.startswith("stream-"):
+            s = self._streams.get(job_id)
+            if s and s["active"]:
+                s["cancelled"] = True
+                resp = s.get("resp")
+                if resp is not None:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+        else:
             self._cancel(job_id)
 
     @work(thread=True)
@@ -648,34 +658,46 @@ class JobsTab(Widget):
         try:
             with httpx.stream("GET", f"{BASE_URL}/api/v1/stream",
                               params=params, timeout=None) as resp:
-                resp.raise_for_status()
-                for line in resp.iter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    try:
-                        ev = json.loads(line[6:])
-                    except json.JSONDecodeError:
-                        continue
-                    etype = ev.get("type")
-                    if etype == "found":
-                        s["total"] = ev.get("count", 0)
-                    elif etype == "downloaded":
-                        s["done"] += 1
-                    elif etype == "failed":
-                        s["failed"] += 1
-                    elif etype == "done":
-                        s["done"]   = ev.get("done",   s["done"])
-                        s["failed"] = ev.get("failed", s["failed"])
-                        s["active"] = False
-                        final = "done" if not s["failed"] else "failed"
-                        self.app.call_from_thread(set_final, final)
-                        self.app.call_from_thread(self.post_message, StreamCompleted())
-                        break
+                s["resp"] = resp
+                if s["cancelled"]:
+                    resp.close()
+                else:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        if s["cancelled"]:
+                            break
+                        if not line.startswith("data: "):
+                            continue
+                        try:
+                            ev = json.loads(line[6:])
+                        except json.JSONDecodeError:
+                            continue
+                        etype = ev.get("type")
+                        if etype == "found":
+                            s["total"] = ev.get("count", 0)
+                        elif etype == "downloaded":
+                            s["done"] += 1
+                        elif etype == "failed":
+                            s["failed"] += 1
+                        elif etype == "done":
+                            s["done"]   = ev.get("done",   s["done"])
+                            s["failed"] = ev.get("failed", s["failed"])
+                            s["active"] = False
+                            final = "done" if not s["failed"] else "failed"
+                            self.app.call_from_thread(set_final, final)
+                            self.app.call_from_thread(self.post_message, StreamCompleted())
+                            break
         except Exception as e:
-            s["active"] = False
-            self.app.call_from_thread(
-                self.query_one("#jobs-status", Label).update, f"[red]{e}[/red]"
-            )
+            if not s["cancelled"]:
+                self.app.call_from_thread(
+                    self.query_one("#jobs-status", Label).update, f"[red]{e}[/red]"
+                )
+        finally:
+            if s["cancelled"]:
+                s["active"] = False
+                self.app.call_from_thread(set_final, "cancelled")
+            elif s["active"]:
+                s["active"] = False
 
 
 # ── Presets Tab ────────────────────────────────────────────────────────────────
