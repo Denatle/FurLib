@@ -43,7 +43,11 @@ func buildSearchTags(source, author string, baseTags []string, sourceTags map[st
 	if author != "" {
 		tags = append(tags, author)
 	}
-	tags = append(tags, baseTags...)
+	for _, t := range baseTags {
+		if t != "" {
+			tags = append(tags, t)
+		}
+	}
 	tags = append(tags, sourceTags[source]...)
 	return tags
 }

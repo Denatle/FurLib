@@ -18,6 +18,8 @@ type MetaData struct {
 	Hash            string
 	Link            string
 	Score           int
+	// Rating is normalized across sources: "safe", "questionable", "explicit".
+	Rating       string
 	// ExtraHeaders are added to the download HTTP request (e.g. Referer for hotlink protection).
 	ExtraHeaders map[string]string
 }

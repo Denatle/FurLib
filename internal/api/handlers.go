@@ -2,6 +2,7 @@ package api
 
 import (
 	"FurLib/internal/dispatcher"
+	"FurLib/internal/librarian"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,16 +18,33 @@ func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *API) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
 	var tags []string
-	if raw := r.URL.Query().Get("tags"); raw != "" {
+	if raw := q.Get("tags"); raw != "" {
 		tags = strings.Split(raw, "+")
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {
 		limit = 20
 	}
-	sort := r.URL.Query().Get("sort")
-	data, err := api.librarian.Search(tags, limit, sort)
+
+	f := librarian.SearchFilters{
+		Tags:   tags,
+		Author: q.Get("author"),
+		Sort:   q.Get("sort"),
+	}
+
+	if raw := q.Get("animated"); raw != "" {
+		v := raw == "true"
+		f.Animated = &v
+	}
+
+	if raw := q.Get("ratings"); raw != "" {
+		f.Ratings = parseCommaSeparated(raw)
+	}
+
+	data, err := api.librarian.Search(limit, f)
 	if err != nil {
 		respondErr(w, http.StatusInternalServerError, err)
 		return
@@ -148,7 +166,10 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tags := strings.Split(r.URL.Query().Get("tags"), "+")
+	var tags []string
+	if raw := r.URL.Query().Get("tags"); raw != "" {
+		tags = strings.Split(raw, "+")
+	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	if limit <= 0 {
 		limit = 10

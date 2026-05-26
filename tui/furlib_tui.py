@@ -184,21 +184,34 @@ class LibraryTab(Widget):
         Binding("d",     "download",       "Download"),
     ]
 
-    _posts: list[dict]
-    _sort:  str
+    _posts:        list[dict]
+    _sort:         str
+    _animated:     str   # "all" | "animated" | "static"
+    _ratings:      set   # subset of {"safe","questionable","explicit"}; empty = all
     _preview_open: bool
+
+    _ALL_RATINGS = ("safe", "questionable", "explicit")
 
     def compose(self) -> ComposeResult:
         with Vertical():
             with Horizontal(id="search-bar"):
-                yield Input(placeholder="tags  e.g. fox rating:safe", id="tag-input")
-                yield Input(placeholder="limit/source", id="limit-input", value="20")
+                yield Input(placeholder="author (artist tag)", id="author-input")
+                yield Input(placeholder="tags  e.g. fox",      id="tag-input")
+                yield Input(placeholder="limit", id="limit-input", value="20")
                 yield Button("Search", variant="primary", id="search-btn")
             with Horizontal(id="sort-bar"):
-                yield Label("Sort:", id="sort-label")
-                yield Button("Newest", variant="primary", id="sort-newest")
-                yield Button("Oldest", variant="default", id="sort-oldest")
-                yield Button("Score",  variant="default", id="sort-score")
+                yield Label("Sort:",     id="sort-label")
+                yield Button("Newest",   variant="primary",  id="sort-newest")
+                yield Button("Oldest",   variant="default",  id="sort-oldest")
+                yield Button("Score",    variant="default",  id="sort-score")
+                yield Label("  Anim:",   id="anim-label")
+                yield Button("All",      variant="primary",  id="anim-all")
+                yield Button("Animated", variant="default",  id="anim-yes")
+                yield Button("Static",   variant="default",  id="anim-no")
+                yield Label("  Rating:", id="rating-label")
+                yield Button("S",  variant="default", id="rating-safe")
+                yield Button("Q",  variant="default", id="rating-questionable")
+                yield Button("E",  variant="default", id="rating-explicit")
             with Horizontal(id="lib-content"):
                 with Vertical(id="lib-left"):
                     yield DataTable(id="library-table", cursor_type="row")
@@ -208,6 +221,8 @@ class LibraryTab(Widget):
     def on_mount(self) -> None:
         self._posts        = []
         self._sort         = "newest"
+        self._animated     = "all"
+        self._ratings      = set()
         self._preview_open = False
         self.query_one("#image-preview").display = False
         t = self.query_one("#library-table", DataTable)
@@ -215,6 +230,7 @@ class LibraryTab(Widget):
         t.add_column("Source",  key="source")
         t.add_column("Post ID", key="post_id")
         t.add_column("Type",    key="type")
+        t.add_column("Rating",  key="rating")
         t.add_column("Size",    key="size")
         t.add_column("Score",   key="score")
         t.add_column("Tags",    key="tags")
@@ -224,26 +240,67 @@ class LibraryTab(Widget):
 
     @on(Button.Pressed, "#sort-newest")
     def _sort_newest(self) -> None: self._set_sort("newest")
-
     @on(Button.Pressed, "#sort-oldest")
     def _sort_oldest(self) -> None: self._set_sort("oldest")
-
     @on(Button.Pressed, "#sort-score")
     def _sort_score(self)  -> None: self._set_sort("score")
 
     def _set_sort(self, sort: str) -> None:
         self._sort = sort
-        for sid, lbl in [("sort-newest", "newest"), ("sort-oldest", "oldest"), ("sort-score", "score")]:
+        for sid, lbl in [("sort-newest","newest"),("sort-oldest","oldest"),("sort-score","score")]:
             self.query_one(f"#{sid}", Button).variant = "primary" if lbl == sort else "default"
+        self.action_refresh()
+
+    # ── animated filter ────────────────────────────────────────────────────────
+
+    @on(Button.Pressed, "#anim-all")
+    def _anim_all(self) -> None: self._set_animated("all")
+    @on(Button.Pressed, "#anim-yes")
+    def _anim_yes(self) -> None: self._set_animated("animated")
+    @on(Button.Pressed, "#anim-no")
+    def _anim_no(self)  -> None: self._set_animated("static")
+
+    def _set_animated(self, v: str) -> None:
+        self._animated = v
+        for sid, lbl in [("anim-all","all"),("anim-yes","animated"),("anim-no","static")]:
+            self.query_one(f"#{sid}", Button).variant = "primary" if lbl == v else "default"
+        self.action_refresh()
+
+    # ── rating filter (toggle) ─────────────────────────────────────────────────
+
+    @on(Button.Pressed, "#rating-safe")
+    def _rating_safe(self)         -> None: self._toggle_rating("safe")
+    @on(Button.Pressed, "#rating-questionable")
+    def _rating_questionable(self) -> None: self._toggle_rating("questionable")
+    @on(Button.Pressed, "#rating-explicit")
+    def _rating_explicit(self)     -> None: self._toggle_rating("explicit")
+
+    def _toggle_rating(self, r: str) -> None:
+        if r in self._ratings:
+            self._ratings.discard(r)
+        else:
+            self._ratings.add(r)
+        colors = {"safe": "green", "questionable": "yellow", "explicit": "red"}
+        for rid in ("safe", "questionable", "explicit"):
+            btn = self.query_one(f"#rating-{rid}", Button)
+            btn.variant = "primary" if rid in self._ratings else "default"
         self.action_refresh()
 
     # ── data ───────────────────────────────────────────────────────────────────
 
     @work(thread=True)
-    def load_posts(self, tags: str = "", limit: int = 20) -> None:
+    def load_posts(self, author: str = "", tags: str = "", limit: int = 20) -> None:
         params: dict = {"limit": limit, "sort": self._sort}
+        if author.strip():
+            params["author"] = author.strip()
         if tags.strip():
             params["tags"] = "+".join(tags.strip().split())
+        if self._animated == "animated":
+            params["animated"] = "true"
+        elif self._animated == "static":
+            params["animated"] = "false"
+        if self._ratings:
+            params["ratings"] = ",".join(self._ratings)
         try:
             posts = (api_get("/api/v1/library", params) or {}).get("data") or []
         except Exception as e:
@@ -253,6 +310,8 @@ class LibraryTab(Widget):
             return
         self.app.call_from_thread(self._populate, posts)
 
+    _RATING_COLOR = {"safe": "green", "questionable": "yellow", "explicit": "red"}
+
     def _populate(self, posts: list[dict]) -> None:
         self._posts = posts
         t = self.query_one("#library-table", DataTable)
@@ -261,11 +320,14 @@ class LibraryTab(Widget):
             size_kb = f"{(p.get('Size') or 0) // 1024} KB"
             tags    = p.get("Tags") or []
             preview = ", ".join(tags[:4]) + ("…" if len(tags) > 4 else "")
+            rating  = p.get("Rating") or ""
+            color   = self._RATING_COLOR.get(rating, "white")
             t.add_row(
                 str(p.get("ID", "")),
                 p.get("Source", ""),
                 p.get("PostID", ""),
                 p.get("Filetype", ""),
+                f"[{color}]{rating}[/{color}]" if rating else "",
                 size_kb,
                 str(p.get("Score", 0)),
                 preview,
@@ -277,16 +339,18 @@ class LibraryTab(Widget):
             self._load_preview_for_cursor()
 
     @on(Button.Pressed, "#search-btn")
+    @on(Input.Submitted, "#author-input, #tag-input, #limit-input")
     def on_search(self) -> None:
         self.action_refresh()
 
     def action_refresh(self) -> None:
-        tags = self.query_one("#tag-input", Input).value
+        author = self.query_one("#author-input", Input).value
+        tags   = self.query_one("#tag-input",    Input).value
         try:
             limit = int(self.query_one("#limit-input", Input).value or "20")
         except ValueError:
             limit = 20
-        self.load_posts(tags, limit)
+        self.load_posts(author, tags, limit)
 
     def on_stream_completed(self, _: StreamCompleted) -> None:
         self.action_refresh()
@@ -886,8 +950,10 @@ CSS = """
 #search-bar Button { width: 12; }
 
 #sort-bar { height: 3; padding: 0 1; align: left middle; }
-#sort-label { margin-right: 1; color: $text-muted; }
+#sort-label, #anim-label, #rating-label { margin-right: 1; color: $text-muted; }
 #sort-bar Button { width: 10; margin-right: 1; }
+#anim-all, #anim-yes, #anim-no { width: 10; margin-right: 1; }
+#rating-safe, #rating-questionable, #rating-explicit { width: 3; margin-right: 1; }
 
 /* Library */
 #lib-content  { height: 1fr; }

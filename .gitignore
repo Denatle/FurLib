@@ -4,3 +4,6 @@
 .claude
 tui/.venv
 tui/__pycache__
+tui/downloads/
+tui/presets.json
+**/.DS_Store

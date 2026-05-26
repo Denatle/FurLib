@@ -25,4 +25,5 @@ type Post struct {
 	LocalHash       string
 	FilePath        string
 	Score           int
+	Rating          string `gorm:"index"`
 }

@@ -32,12 +32,42 @@ var sortScopes = map[string]func(*gorm.DB) *gorm.DB{
 	"score":  func(db *gorm.DB) *gorm.DB { return db.Order("score DESC") },
 }
 
-func (l *Librarian) Search(tags []string, limit int, sort string) ([]archivator.Post, error) {
-	scope, ok := sortScopes[sort]
-	if !ok {
-		scope = sortScopes["newest"]
+type SearchFilters struct {
+	Tags     []string
+	Author   string
+	Sort     string
+	Animated *bool    // nil = all, true = animated only, false = static only
+	Ratings  []string // nil/empty = all; values: "safe", "questionable", "explicit"
+}
+
+func (l *Librarian) Search(limit int, f SearchFilters) ([]archivator.Post, error) {
+	tags := f.Tags
+	if f.Author != "" {
+		tags = append([]string{f.Author}, tags...)
 	}
-	return l.repo.Search(tags, limit, scope)
+
+	var scopes []func(*gorm.DB) *gorm.DB
+
+	sortScope, ok := sortScopes[f.Sort]
+	if !ok {
+		sortScope = sortScopes["newest"]
+	}
+	scopes = append(scopes, sortScope)
+
+	if f.Animated != nil {
+		v := *f.Animated
+		scopes = append(scopes, func(db *gorm.DB) *gorm.DB {
+			return db.Where("animated = ?", v)
+		})
+	}
+
+	if len(f.Ratings) > 0 {
+		scopes = append(scopes, func(db *gorm.DB) *gorm.DB {
+			return db.Where("rating IN ?", f.Ratings)
+		})
+	}
+
+	return l.repo.Search(tags, limit, scopes...)
 }
 
 func (l *Librarian) GetPost(id uint) (*archivator.Post, error) {
