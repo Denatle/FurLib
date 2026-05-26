@@ -27,6 +27,13 @@ func (a *Archivator) Archive(media fetcher.Media) error {
 		return fmt.Errorf("md5 failed: %w", err)
 	}
 
+	size := media.Meta.Size
+	if size == 0 {
+		if info, err := os.Stat(media.Path); err == nil {
+			size = uint64(info.Size())
+		}
+	}
+
 	post := &Post{
 		PostID:          media.Meta.ID,
 		Source:          media.Meta.Source,
@@ -34,7 +41,7 @@ func (a *Archivator) Archive(media fetcher.Media) error {
 		Tags:            media.Meta.Tags,
 		PostCreatedAt:   media.Meta.CreatedDate,
 		DownloadedAt:    time.Now(),
-		Size:            media.Meta.Size,
+		Size:            size,
 		Width:           media.Meta.Width,
 		Height:          media.Meta.Height,
 		Filetype:        media.Meta.Filetype,

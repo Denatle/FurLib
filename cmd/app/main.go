@@ -7,6 +7,7 @@ import (
 	"FurLib/internal/dispatcher"
 	"FurLib/internal/e621"
 	"FurLib/internal/fetcher"
+	"FurLib/internal/gelbooru"
 	"FurLib/internal/librarian"
 
 	"go.uber.org/fx"
@@ -21,6 +22,7 @@ func main() {
 		archivator.Module,
 		dispatcher.Module,
 		e621.Module,
+		gelbooru.Module,
 		fetcher.Module,
 		librarian.Module,
 	).Run()

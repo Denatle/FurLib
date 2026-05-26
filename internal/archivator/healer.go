@@ -48,6 +48,12 @@ func (h *Healer) Check() (HealthReport, error) {
 			missingIDs = append(missingIDs, p.ID)
 			continue
 		}
+		// Original download was bad (e.g. hotlink HTML page instead of image)
+		if p.SourceHash != "" && p.LocalHash != p.SourceHash {
+			corruptedIDs = append(corruptedIDs, p.ID)
+			continue
+		}
+		// File modified after download
 		if p.LocalHash != "" {
 			hash, err := computeMD5(p.FilePath)
 			if err != nil {
@@ -85,6 +91,19 @@ func (h *Healer) Heal(ctx context.Context) (HealReport, error) {
 			toHeal = append(toHeal, p)
 			continue
 		}
+		// Original download was bad (e.g. hotlink HTML page instead of image)
+		if p.SourceHash != "" && p.LocalHash != p.SourceHash {
+			h.log.Info("heal: bad original download detected",
+				zap.Uint("id", p.ID),
+				zap.String("post_id", p.PostID),
+				zap.String("source_hash", p.SourceHash),
+				zap.String("local_hash", p.LocalHash),
+			)
+			report.Corrupted++
+			toHeal = append(toHeal, p)
+			continue
+		}
+		// File modified after download
 		if p.LocalHash != "" {
 			hash, err := computeMD5(p.FilePath)
 			if err != nil {
@@ -148,7 +167,12 @@ func (h *Healer) Heal(ctx context.Context) (HealReport, error) {
 				continue
 			}
 
-			if err := h.repo.UpdateFileInfo(post.ID, result.Media.Path, localHash); err != nil {
+			var fileSize uint64
+			if info, err := os.Stat(result.Media.Path); err == nil {
+				fileSize = uint64(info.Size())
+			}
+
+			if err := h.repo.UpdateFileInfo(post.ID, result.Media.Path, localHash, fileSize); err != nil {
 				h.log.Warn("heal: db update failed", zap.String("post_id", post.PostID), zap.Error(err))
 				report.Failed++
 				continue

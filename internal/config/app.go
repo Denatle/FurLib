@@ -7,6 +7,7 @@ type App struct {
 
 	API        APIConfig
 	E621       E621Config
+	Gelbooru   GelbooruConfig
 	Fetcher    FetcherConfig
 	Archivator ArchivatorConfig
 }

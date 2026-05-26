@@ -136,6 +136,9 @@ func (f *Fetcher) download(ctx context.Context, meta MetaData) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	for k, v := range meta.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := f.http.Do(req)
 	if err != nil {

@@ -74,9 +74,10 @@ func (r *Repository) FindMissing() ([]*Post, error) {
 	return missing, nil
 }
 
-func (r *Repository) UpdateFileInfo(id uint, path, hash string) error {
+func (r *Repository) UpdateFileInfo(id uint, path, hash string, size uint64) error {
 	return r.db.Model(&Post{}).Where("id = ?", id).Updates(map[string]any{
 		"file_path":  path,
 		"local_hash": hash,
+		"size":       size,
 	}).Error
 }
