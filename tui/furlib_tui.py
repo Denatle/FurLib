@@ -548,7 +548,7 @@ class DeletedTab(Widget):
         for p in posts:
             rating  = p.get("Rating") or ""
             color   = self._RATING_COLOR.get(rating, "white")
-            deleted = (p.get("DeletedAt") or {}).get("Time", "")[:19].replace("T", " ")
+            deleted = str(p.get("DeletedAt") or "")[:19].replace("T", " ")
             t.add_row(
                 str(p.get("ID", "")),
                 p.get("Source", ""),
@@ -1218,14 +1218,14 @@ class FurLibApp(App):
         with TabbedContent(initial="tab-library"):
             with TabPane("Library", id="tab-library"):
                 yield LibraryTab()
-            with TabPane("Deleted", id="tab-deleted"):
-                yield DeletedTab()
             with TabPane("Jobs",    id="tab-jobs"):
                 yield JobsTab()
             with TabPane("Presets", id="tab-presets"):
                 yield PresetsTab()
             with TabPane("Health",  id="tab-health"):
                 yield HealthTab()
+            with TabPane("Deleted", id="tab-deleted"):
+                yield DeletedTab()
         yield Footer()
 
     def on_run_preset(self, msg: RunPreset) -> None:
