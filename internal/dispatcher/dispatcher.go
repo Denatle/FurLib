@@ -117,42 +117,40 @@ func (d *Dispatcher) run(ctx context.Context, job *Job) {
 }
 
 func (d *Dispatcher) Stream(ctx context.Context, tags []string, limit int, opts Options) <-chan Event {
-	events := make(chan Event, 32)
+	events := make(chan Event, 512)
 
 	go func() {
 		defer close(events)
 
-		var totalDone, totalFailed int
-
+		// Phase 1: search all sources to know total count before any download starts.
+		var allMetas []fetcher.MetaData
 		for _, source := range d.resolveSources(opts) {
 			if ctx.Err() != nil {
-				break
+				return
 			}
-
 			metas, err := d.fetcher.SearchByTags(source, tags, limit)
 			if err != nil {
 				d.log.Warn("stream search failed", zap.String("source", source), zap.Error(err))
 				continue
 			}
+			allMetas = append(allMetas, filterByDate(metas, opts)...)
+		}
 
-			metas = filterByDate(metas, opts)
+		events <- Event{Type: EventFound, Count: len(allMetas)}
 
-			events <- Event{Type: EventFound, Source: source, Count: len(metas)}
-
-			for result := range d.fetcher.DownloadAll(ctx, metas) {
-				if result.Err != nil {
-					totalFailed++
-					events <- Event{Type: EventFailed, Source: source, PostID: result.Media.Meta.ID, Error: result.Err.Error()}
-					continue
-				}
-
-				totalDone++
-				if err := d.archivator.Archive(result.Media); err != nil {
-					d.log.Warn("archive failed", zap.String("post_id", result.Media.Meta.ID), zap.Error(err))
-				}
-				events <- Event{Type: EventDownloaded, Source: source, PostID: result.Media.Meta.ID}
-
+		// Phase 2: download all in parallel (limited by Workers semaphore).
+		var totalDone, totalFailed int
+		for result := range d.fetcher.DownloadAll(ctx, allMetas) {
+			if result.Err != nil {
+				totalFailed++
+				events <- Event{Type: EventFailed, Source: result.Media.Meta.Source, PostID: result.Media.Meta.ID, Error: result.Err.Error()}
+				continue
 			}
+			totalDone++
+			if err := d.archivator.Archive(result.Media); err != nil {
+				d.log.Warn("archive failed", zap.String("post_id", result.Media.Meta.ID), zap.Error(err))
+			}
+			events <- Event{Type: EventDownloaded, Source: result.Media.Meta.Source, PostID: result.Media.Meta.ID}
 		}
 
 		events <- Event{Type: EventDone, Done: totalDone, Failed: totalFailed}
