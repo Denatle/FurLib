@@ -63,6 +63,21 @@ func (a *Archivator) Archive(media fetcher.Media) error {
 	return nil
 }
 
+// SoftDelete removes the file from disk and marks the post as deleted in the DB.
+func (a *Archivator) SoftDelete(id uint) error {
+	post, err := a.repo.SoftDelete(id)
+	if err != nil {
+		return fmt.Errorf("soft delete: %w", err)
+	}
+	if post.FilePath != "" {
+		if err := os.Remove(post.FilePath); err != nil && !os.IsNotExist(err) {
+			a.log.Warn("delete file failed", zap.String("path", post.FilePath), zap.Error(err))
+		}
+	}
+	a.log.Info("deleted post", zap.Uint("id", id), zap.String("path", post.FilePath))
+	return nil
+}
+
 func computeMD5(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

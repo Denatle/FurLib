@@ -9,13 +9,14 @@ import (
 )
 
 type Librarian struct {
-	repo   *archivator.Repository
-	healer *archivator.Healer
-	log    *zap.Logger
+	repo       *archivator.Repository
+	archivator *archivator.Archivator
+	healer     *archivator.Healer
+	log        *zap.Logger
 }
 
-func NewLibrarian(repo *archivator.Repository, healer *archivator.Healer, log *zap.Logger) *Librarian {
-	return &Librarian{repo: repo, healer: healer, log: log}
+func NewLibrarian(repo *archivator.Repository, arch *archivator.Archivator, healer *archivator.Healer, log *zap.Logger) *Librarian {
+	return &Librarian{repo: repo, archivator: arch, healer: healer, log: log}
 }
 
 func (l *Librarian) Check() (archivator.HealthReport, error) {
@@ -72,4 +73,16 @@ func (l *Librarian) Search(limit int, f SearchFilters) ([]archivator.Post, error
 
 func (l *Librarian) GetPost(id uint) (*archivator.Post, error) {
 	return l.repo.FindByID(id)
+}
+
+func (l *Librarian) SoftDelete(id uint) error {
+	return l.archivator.SoftDelete(id)
+}
+
+func (l *Librarian) ListDeleted(limit int) ([]archivator.Post, error) {
+	return l.repo.ListDeleted(limit, sortScopes["newest"])
+}
+
+func (l *Librarian) ClearDeleted() (int64, error) {
+	return l.repo.ClearDeleted()
 }

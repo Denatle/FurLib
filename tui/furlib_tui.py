@@ -68,8 +68,13 @@ def api_get(path: str, params: dict | None = None) -> dict:
 def api_post(path: str, json_body: dict | None = None) -> dict:
     return httpx.post(f"{BASE_URL}{path}", json=json_body, timeout=60).raise_for_status().json()  # type: ignore[union-attr]
 
-def api_delete(path: str) -> None:
-    httpx.delete(f"{BASE_URL}{path}", timeout=10).raise_for_status()
+def api_delete(path: str) -> dict | None:
+    r = httpx.delete(f"{BASE_URL}{path}", timeout=10)
+    r.raise_for_status()
+    try:
+        return r.json()
+    except Exception:
+        return None
 
 
 # ── Messages ───────────────────────────────────────────────────────────────────
@@ -182,6 +187,7 @@ class LibraryTab(Widget):
         Binding("r",     "refresh",        "Refresh"),
         Binding("space", "toggle_preview", "Preview"),
         Binding("d",     "download",       "Download"),
+        Binding("x",     "delete_post",    "Delete"),
     ]
 
     _posts:        list[dict]
@@ -333,7 +339,7 @@ class LibraryTab(Widget):
                 preview,
             )
         self.query_one("#lib-status", Label).update(
-            f"{len(posts)} posts  [dim]space=preview  d=download  r=refresh[/dim]"
+            f"{len(posts)} posts  [dim]space=preview  d=download  x=delete  r=refresh[/dim]"
         )
         if self._preview_open:
             self._load_preview_for_cursor()
@@ -399,6 +405,34 @@ class LibraryTab(Widget):
             return
         self._do_download(self._posts[idx])
 
+    def action_delete_post(self) -> None:
+        t   = self.query_one("#library-table", DataTable)
+        idx = t.cursor_row
+        if idx < 0 or idx >= len(self._posts):
+            return
+        p = self._posts[idx]
+        self.app.push_screen(DeleteConfirmModal(p), self._on_delete_confirmed)
+
+    def _on_delete_confirmed(self, post: dict | None) -> None:
+        if post is not None:
+            self._do_delete(post)
+
+    @work(thread=True)
+    def _do_delete(self, p: dict) -> None:
+        post_id = p.get("ID", 0)
+        try:
+            api_delete(f"/api/v1/library/{post_id}")
+            self.app.call_from_thread(self.action_refresh)
+            self.app.call_from_thread(
+                self.query_one("#lib-status", Label).update,
+                f"[green]Deleted post {post_id}[/green]"
+            )
+        except Exception as e:
+            self.app.call_from_thread(
+                self.query_one("#lib-status", Label).update,
+                f"[red]Delete failed: {e}[/red]"
+            )
+
     @work(thread=True)
     def _do_download(self, p: dict) -> None:
         post_id  = p.get("ID", 0)
@@ -418,6 +452,133 @@ class LibraryTab(Widget):
             self.app.call_from_thread(
                 self.query_one("#lib-status", Label).update,
                 f"[red]Download failed: {e}[/red]"
+            )
+
+
+# ── Delete Confirmation Modal ──────────────────────────────────────────────────
+
+class DeleteConfirmModal(ModalScreen[dict | None]):
+    DEFAULT_CSS = "DeleteConfirmModal { align: center middle; }"
+    BINDINGS = [
+        Binding("x",      "confirm", "Confirm"),
+        Binding("escape", "cancel",  "Cancel"),
+    ]
+
+    def __init__(self, post: dict) -> None:
+        super().__init__()
+        self._post = post
+
+    def compose(self) -> ComposeResult:
+        post_id  = self._post.get("PostID", "")
+        source   = self._post.get("Source", "")
+        ftype    = self._post.get("Filetype", "")
+        with Container(id="confirm-container"):
+            yield Static(
+                f"[bold red]Delete post?[/bold red]\n\n"
+                f"[white]{source}[/white]  [dim]{post_id}.{ftype}[/dim]\n\n"
+                f"File will be removed from disk.\n"
+                f"It will [bold]not[/bold] be re-downloaded.\n\n"
+                f"[bold]x[/bold] = confirm   [bold]Esc[/bold] = cancel",
+                id="confirm-text",
+            )
+
+    def action_confirm(self) -> None:
+        self.dismiss(self._post)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ── Deleted Tab ────────────────────────────────────────────────────────────────
+
+class DeletedTab(Widget):
+    BINDINGS = [
+        Binding("r", "refresh", "Refresh"),
+        Binding("c", "clear",   "Clear all"),
+    ]
+
+    _posts: list[dict]
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            with Horizontal(id="deleted-bar"):
+                yield Button("Refresh [r]", id="del-refresh-btn")
+                yield Button("Clear all [c]", variant="error", id="del-clear-btn")
+                yield Label("", id="deleted-status")
+            yield DataTable(id="deleted-table", cursor_type="row")
+
+    def on_mount(self) -> None:
+        self._posts = []
+        t = self.query_one("#deleted-table", DataTable)
+        t.add_column("ID",         key="id",         width=6)
+        t.add_column("Source",     key="source",     width=10)
+        t.add_column("Post ID",    key="post_id",    width=30)
+        t.add_column("Type",       key="type",       width=6)
+        t.add_column("Rating",     key="rating",     width=12)
+        t.add_column("Size",       key="size",       width=8)
+        t.add_column("Deleted at", key="deleted_at", width=19)
+        self.action_refresh()
+
+    @on(Button.Pressed, "#del-refresh-btn")
+    def _on_refresh(self) -> None: self.action_refresh()
+
+    @on(Button.Pressed, "#del-clear-btn")
+    def _on_clear(self) -> None: self.action_clear()
+
+    def action_refresh(self) -> None:
+        self._load()
+
+    @work(thread=True)
+    def _load(self) -> None:
+        try:
+            posts = (api_get("/api/v1/library/deleted", {"limit": "500"}) or {}).get("data") or []
+        except Exception as e:
+            self.app.call_from_thread(
+                self.query_one("#deleted-status", Label).update, f"[red]{e}[/red]"
+            )
+            return
+        self.app.call_from_thread(self._populate, posts)
+
+    _RATING_COLOR = {"safe": "green", "questionable": "yellow", "explicit": "red"}
+
+    def _populate(self, posts: list[dict]) -> None:
+        self._posts = posts
+        t = self.query_one("#deleted-table", DataTable)
+        t.clear()
+        for p in posts:
+            rating  = p.get("Rating") or ""
+            color   = self._RATING_COLOR.get(rating, "white")
+            deleted = (p.get("DeletedAt") or {}).get("Time", "")[:19].replace("T", " ")
+            t.add_row(
+                str(p.get("ID", "")),
+                p.get("Source", ""),
+                p.get("PostID", ""),
+                p.get("Filetype", ""),
+                f"[{color}]{rating}[/{color}]" if rating else "",
+                f"{(p.get('Size') or 0) // 1024} KB",
+                deleted,
+            )
+        self.query_one("#deleted-status", Label).update(
+            f"{len(posts)} deleted  [dim]c=clear all  r=refresh[/dim]"
+        )
+
+    def action_clear(self) -> None:
+        self._do_clear()
+
+    @work(thread=True)
+    def _do_clear(self) -> None:
+        try:
+            result = api_delete("/api/v1/library/deleted") or {}
+            n = (result or {}).get("cleared", "?")
+            self.app.call_from_thread(self._populate, [])
+            self.app.call_from_thread(
+                self.query_one("#deleted-status", Label).update,
+                f"[green]Cleared {n} records[/green]"
+            )
+        except Exception as e:
+            self.app.call_from_thread(
+                self.query_one("#deleted-status", Label).update,
+                f"[red]{e}[/red]"
             )
 
 
@@ -1025,7 +1186,23 @@ NewJobModal { align: center middle; }
 
 /* Fill height */
 TabPane { height: 1fr; }
-LibraryTab, JobsTab, PresetsTab, HealthTab { height: 1fr; }
+LibraryTab, DeletedTab, JobsTab, PresetsTab, HealthTab { height: 1fr; }
+
+/* Delete confirm modal */
+#confirm-container {
+    width: 60;
+    height: auto;
+    border: tall $error;
+    background: $surface;
+    padding: 2 4;
+    align: center middle;
+}
+#confirm-text { text-align: center; }
+
+/* Deleted tab */
+#deleted-bar { height: 3; align: left middle; }
+#deleted-bar Button { margin-right: 1; }
+#deleted-status { margin-left: 2; }
 """
 
 
@@ -1041,6 +1218,8 @@ class FurLibApp(App):
         with TabbedContent(initial="tab-library"):
             with TabPane("Library", id="tab-library"):
                 yield LibraryTab()
+            with TabPane("Deleted", id="tab-deleted"):
+                yield DeletedTab()
             with TabPane("Jobs",    id="tab-jobs"):
                 yield JobsTab()
             with TabPane("Presets", id="tab-presets"):

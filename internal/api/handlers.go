@@ -80,6 +80,43 @@ func (api *API) handleGetFile(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, post.FilePath)
 }
 
+func (api *API) handleDeletePost(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		respondErr(w, http.StatusBadRequest, fmt.Errorf("invalid id"))
+		return
+	}
+	if err := api.librarian.SoftDelete(uint(id)); err != nil {
+		respondErr(w, http.StatusNotFound, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (api *API) handleListDeleted(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	posts, err := api.librarian.ListDeleted(limit)
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"data": posts})
+}
+
+func (api *API) handleClearDeleted(w http.ResponseWriter, r *http.Request) {
+	n, err := api.librarian.ClearDeleted()
+	if err != nil {
+		respondErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"cleared": n})
+}
+
 type createJobRequest struct {
 	Tags       []string            `json:"tags"`
 	Author     string              `json:"author,omitempty"`

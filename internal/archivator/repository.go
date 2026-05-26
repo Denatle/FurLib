@@ -31,9 +31,16 @@ func NewRepository(log *zap.Logger, cfg config.ArchivatorConfig) (*Repository, e
 }
 
 func (r *Repository) Save(post *Post) error {
-	return r.db.
-		Where(Post{PostID: post.PostID, Source: post.Source}).
-		FirstOrCreate(post).Error
+	var existing Post
+	// Use Unscoped so soft-deleted records are found and skipped.
+	// Without this, a deleted post would be re-created on next download.
+	err := r.db.Unscoped().
+		Where("post_id = ? AND source = ?", post.PostID, post.Source).
+		First(&existing).Error
+	if err == nil {
+		return nil // already exists (possibly soft-deleted) — skip
+	}
+	return r.db.Create(post).Error
 }
 
 func (r *Repository) Search(tags []string, limit int, scopes ...func(*gorm.DB) *gorm.DB) ([]Post, error) {
@@ -80,4 +87,30 @@ func (r *Repository) UpdateFileInfo(id uint, path, hash string, size uint64) err
 		"local_hash": hash,
 		"size":       size,
 	}).Error
+}
+
+// SoftDelete marks a post as deleted and returns its file path so the caller can
+// remove the file from disk. GORM sets deleted_at; future Save calls will skip it.
+func (r *Repository) SoftDelete(id uint) (*Post, error) {
+	post, err := r.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	return post, r.db.Delete(post).Error
+}
+
+// ListDeleted returns posts that have been soft-deleted.
+func (r *Repository) ListDeleted(limit int, scopes ...func(*gorm.DB) *gorm.DB) ([]Post, error) {
+	db := r.db.Unscoped().Model(&Post{}).Where("deleted_at IS NOT NULL")
+	for _, s := range scopes {
+		db = s(db)
+	}
+	var posts []Post
+	return posts, db.Limit(limit).Find(&posts).Error
+}
+
+// ClearDeleted permanently removes all soft-deleted records from the database.
+func (r *Repository) ClearDeleted() (int64, error) {
+	result := r.db.Unscoped().Where("deleted_at IS NOT NULL").Delete(&Post{})
+	return result.RowsAffected, result.Error
 }

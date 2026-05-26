@@ -43,8 +43,12 @@ func (api *API) buildRouter() *chi.Mux {
 				r.Get("/", api.handleSearch)
 				r.Get("/health", api.handleLibraryHealth)
 				r.Post("/heal", api.handleLibraryHeal)
+				// /deleted must be registered before /{id} to avoid shadowing
+				r.Get("/deleted", api.handleListDeleted)
+				r.Delete("/deleted", api.handleClearDeleted)
 				r.Get("/{id}", api.handleGetPost)
 				r.Get("/{id}/file", api.handleGetFile)
+				r.Delete("/{id}", api.handleDeletePost)
 			})
 
 			r.Route("/jobs", func(r chi.Router) {
