@@ -3,6 +3,7 @@ package librarian
 import (
 	"FurLib/internal/archivator"
 	"context"
+	"strings"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -42,11 +43,6 @@ type SearchFilters struct {
 }
 
 func (l *Librarian) Search(limit int, f SearchFilters) ([]archivator.Post, error) {
-	tags := f.Tags
-	if f.Author != "" {
-		tags = append([]string{f.Author}, tags...)
-	}
-
 	var scopes []func(*gorm.DB) *gorm.DB
 
 	sortScope, ok := sortScopes[f.Sort]
@@ -54,6 +50,17 @@ func (l *Librarian) Search(limit int, f SearchFilters) ([]archivator.Post, error
 		sortScope = sortScopes["newest"]
 	}
 	scopes = append(scopes, sortScope)
+
+	if f.Author != "" {
+		a := strings.ToLower(f.Author)
+		scopes = append(scopes, func(db *gorm.DB) *gorm.DB {
+			// Match Author column OR fall back to tag-based artist search for older posts.
+			return db.Where(
+				"LOWER(author) LIKE ? OR EXISTS (SELECT 1 FROM json_each(tags) WHERE LOWER(value) LIKE ?)",
+				"%"+a+"%", "%"+a+"%",
+			)
+		})
+	}
 
 	if f.Animated != nil {
 		v := *f.Animated
@@ -68,7 +75,20 @@ func (l *Librarian) Search(limit int, f SearchFilters) ([]archivator.Post, error
 		})
 	}
 
-	return l.repo.Search(tags, limit, scopes...)
+	posts, err := l.repo.Search(f.Tags, limit, scopes...)
+	if err != nil {
+		return nil, err
+	}
+	// Lazy backfill: persist Author for older posts that matched via the tag fallback.
+	if f.Author != "" {
+		for i := range posts {
+			if posts[i].Author == "" {
+				posts[i].Author = f.Author
+				_ = l.repo.UpdateAuthor(posts[i].ID, f.Author)
+			}
+		}
+	}
+	return posts, nil
 }
 
 func (l *Librarian) GetPost(id uint) (*archivator.Post, error) {

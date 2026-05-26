@@ -19,16 +19,17 @@ type PostsResponse struct {
 }
 
 type Post struct {
-	ID        int          `json:"id"`
-	CreatedAt GelbooruTime `json:"created_at"`
-	Score     int          `json:"score"`
-	Width     int          `json:"width"`
-	Height    int          `json:"height"`
-	MD5       string       `json:"md5"`
-	Rating    string       `json:"rating"`
-	Source    string       `json:"source"`
-	Tags      string       `json:"tags"`
-	FileURL   string       `json:"file_url"`
+	ID              int          `json:"id"`
+	CreatedAt       GelbooruTime `json:"created_at"`
+	Score           int          `json:"score"`
+	Width           int          `json:"width"`
+	Height          int          `json:"height"`
+	MD5             string       `json:"md5"`
+	Rating          string       `json:"rating"`
+	Source          string       `json:"source"`
+	Tags            string       `json:"tags"`
+	TagStringArtist string       `json:"tag_string_artist"`
+	FileURL         string       `json:"file_url"`
 	// Image is the bare filename (e.g. "abc123.png") used to derive extension.
 	Image string `json:"image"`
 }

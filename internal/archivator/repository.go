@@ -3,6 +3,7 @@ package archivator
 import (
 	"FurLib/internal/config"
 	"os"
+	"strings"
 
 	"github.com/glebarez/sqlite"
 	"go.uber.org/zap"
@@ -46,7 +47,12 @@ func (r *Repository) Save(post *Post) error {
 func (r *Repository) Search(tags []string, limit int, scopes ...func(*gorm.DB) *gorm.DB) ([]Post, error) {
 	db := r.db.Model(&Post{})
 	for _, tag := range tags {
-		db = db.Where("EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)", tag)
+		if strings.HasPrefix(tag, "-") {
+			neg := tag[1:]
+			db = db.Where("NOT EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ?)", "%"+neg+"%")
+		} else {
+			db = db.Where("EXISTS (SELECT 1 FROM json_each(tags) WHERE value LIKE ?)", "%"+tag+"%")
+		}
 	}
 	for _, scope := range scopes {
 		db = scope(db)
@@ -79,6 +85,10 @@ func (r *Repository) FindMissing() ([]*Post, error) {
 		}
 	}
 	return missing, nil
+}
+
+func (r *Repository) UpdateAuthor(id uint, author string) error {
+	return r.db.Model(&Post{}).Where("id = ?", id).Update("author", author).Error
 }
 
 func (r *Repository) UpdateFileInfo(id uint, path, hash string, size uint64) error {

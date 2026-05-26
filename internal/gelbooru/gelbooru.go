@@ -189,6 +189,7 @@ func FlattenPosts(resp PostsResponse) []fetcher.MetaData {
 			Source:          "gelbooru",
 			OriginalSources: sources,
 			Tags:            strings.Fields(html.UnescapeString(post.Tags)),
+			Author:          html.UnescapeString(post.TagStringArtist),
 			CreatedDate:     post.CreatedAt.Time,
 			Width:           uint16(post.Width),
 			Height:          uint16(post.Height),

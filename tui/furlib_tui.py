@@ -203,7 +203,7 @@ class LibraryTab(Widget):
             with Horizontal(id="search-bar"):
                 yield Input(placeholder="author (artist tag)", id="author-input")
                 yield Input(placeholder="tags  e.g. fox",      id="tag-input")
-                yield Input(placeholder="limit", id="limit-input", value="20")
+                yield Input(placeholder="limit", id="limit-input", value="1000")
                 yield Button("Search", variant="primary", id="search-btn")
             with Horizontal(id="sort-bar"):
                 yield Label("Sort:",     id="sort-label")
@@ -232,13 +232,14 @@ class LibraryTab(Widget):
         self._preview_open = False
         self.query_one("#image-preview").display = False
         t = self.query_one("#library-table", DataTable)
-        t.add_column("ID",      key="id")
-        t.add_column("Source",  key="source")
+        t.add_column("ID",      key="id",     width=6)
+        t.add_column("Author",  key="author", width=16)
+        t.add_column("Source",  key="source", width=10)
         t.add_column("Post ID", key="post_id")
-        t.add_column("Type",    key="type")
-        t.add_column("Rating",  key="rating")
-        t.add_column("Size",    key="size")
-        t.add_column("Score",   key="score")
+        t.add_column("Type",    key="type",   width=6)
+        t.add_column("Rating",  key="rating", width=12)
+        t.add_column("Size",    key="size",   width=8)
+        t.add_column("Score",   key="score",  width=7)
         t.add_column("Tags",    key="tags")
         self.load_posts()
 
@@ -295,7 +296,7 @@ class LibraryTab(Widget):
     # ── data ───────────────────────────────────────────────────────────────────
 
     @work(thread=True)
-    def load_posts(self, author: str = "", tags: str = "", limit: int = 20) -> None:
+    def load_posts(self, author: str = "", tags: str = "", limit: int = 1000) -> None:
         params: dict = {"limit": limit, "sort": self._sort}
         if author.strip():
             params["author"] = author.strip()
@@ -330,6 +331,7 @@ class LibraryTab(Widget):
             color   = self._RATING_COLOR.get(rating, "white")
             t.add_row(
                 str(p.get("ID", "")),
+                p.get("Author", ""),
                 p.get("Source", ""),
                 p.get("PostID", ""),
                 p.get("Filetype", ""),

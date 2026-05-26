@@ -26,4 +26,5 @@ type Post struct {
 	FilePath        string
 	Score           int
 	Rating          string `gorm:"index"`
+	Author          string `gorm:"index"`
 }

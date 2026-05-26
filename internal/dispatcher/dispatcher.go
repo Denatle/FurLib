@@ -111,6 +111,14 @@ func (d *Dispatcher) run(ctx context.Context, job *Job) {
 			continue
 		}
 
+		if job.Author != "" {
+			for i := range metas {
+				if metas[i].Author == "" {
+					metas[i].Author = job.Author
+				}
+			}
+		}
+
 		metas = filterByDate(metas, opts)
 		job.addTotal(len(metas))
 
@@ -152,6 +160,13 @@ func (d *Dispatcher) Stream(ctx context.Context, tags []string, limit int, opts 
 			if err != nil {
 				d.log.Warn("stream search failed", zap.String("source", source), zap.Error(err))
 				continue
+			}
+			if opts.Author != "" {
+				for i := range metas {
+					if metas[i].Author == "" {
+						metas[i].Author = opts.Author
+					}
+				}
 			}
 			allMetas = append(allMetas, filterByDate(metas, opts)...)
 		}

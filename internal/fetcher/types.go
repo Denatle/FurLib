@@ -19,7 +19,9 @@ type MetaData struct {
 	Link            string
 	Score           int
 	// Rating is normalized across sources: "safe", "questionable", "explicit".
-	Rating       string
+	Rating string
+	// Author is the primary creator (artist/uploader). Set by dispatcher from search opts.
+	Author string
 	// ExtraHeaders are added to the download HTTP request (e.g. Referer for hotlink protection).
 	ExtraHeaders map[string]string
 }

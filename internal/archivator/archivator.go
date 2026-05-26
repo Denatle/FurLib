@@ -53,6 +53,7 @@ func (a *Archivator) Archive(media fetcher.Media) error {
 		FilePath:        media.Path,
 		Score:           media.Meta.Score,
 		Rating:          media.Meta.Rating,
+		Author:          media.Meta.Author,
 	}
 
 	if err := a.repo.Save(post); err != nil {
