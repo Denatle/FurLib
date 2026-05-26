@@ -34,6 +34,24 @@ func (d *Dispatcher) resolveSources(opts Options) []string {
 	return d.fetcher.Sources()
 }
 
+// buildSearchTags assembles the final tag list for a specific source:
+// author (if set) + base tags + per-source extra tags.
+// For tag-based sources (e621, gelbooru) author is just another tag.
+// Future sources like kemono will handle it differently at the client level.
+func buildSearchTags(source, author string, baseTags []string, sourceTags map[string][]string) []string {
+	var tags []string
+	if author != "" {
+		tags = append(tags, author)
+	}
+	for _, t := range baseTags {
+		if t != "" {
+			tags = append(tags, t)
+		}
+	}
+	tags = append(tags, sourceTags[source]...)
+	return tags
+}
+
 func filterByDate(metas []fetcher.MetaData, opts Options) []fetcher.MetaData {
 	if opts.NewerThan == nil && opts.OlderThan == nil {
 		return metas
@@ -55,15 +73,17 @@ func (d *Dispatcher) Submit(tags []string, limit int, opts Options) (string, err
 	ctx, cancel := context.WithCancel(context.Background())
 
 	job := &Job{
-		ID:        uuid.New().String(),
-		Status:    StatusPending,
-		Sources:   d.resolveSources(opts),
-		Tags:      tags,
-		Limit:     limit,
-		NewerThan: opts.NewerThan,
-		OlderThan: opts.OlderThan,
-		CreatedAt: time.Now(),
-		cancel:    cancel,
+		ID:         uuid.New().String(),
+		Status:     StatusPending,
+		Sources:    d.resolveSources(opts),
+		Author:     opts.Author,
+		Tags:       tags,
+		SourceTags: opts.SourceTags,
+		Limit:      limit,
+		NewerThan:  opts.NewerThan,
+		OlderThan:  opts.OlderThan,
+		CreatedAt:  time.Now(),
+		cancel:     cancel,
 	}
 
 	d.jobs.Store(job.ID, job)
@@ -85,7 +105,7 @@ func (d *Dispatcher) run(ctx context.Context, job *Job) {
 			break
 		}
 
-		metas, err := d.fetcher.SearchByTags(source, job.Tags, job.Limit)
+		metas, err := d.fetcher.SearchByTags(source, buildSearchTags(source, job.Author, job.Tags, job.SourceTags), job.Limit)
 		if err != nil {
 			d.log.Warn("search failed", zap.String("job_id", job.ID), zap.String("source", source), zap.Error(err))
 			continue
@@ -128,7 +148,7 @@ func (d *Dispatcher) Stream(ctx context.Context, tags []string, limit int, opts 
 			if ctx.Err() != nil {
 				return
 			}
-			metas, err := d.fetcher.SearchByTags(source, tags, limit)
+			metas, err := d.fetcher.SearchByTags(source, buildSearchTags(source, opts.Author, tags, opts.SourceTags), limit)
 			if err != nil {
 				d.log.Warn("stream search failed", zap.String("source", source), zap.Error(err))
 				continue

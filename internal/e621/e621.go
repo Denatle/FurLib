@@ -80,6 +80,19 @@ func (c *Client) PostByID(id string) (fetcher.MetaData, error) {
 	return posts[0], nil
 }
 
+func normalizeRating(r string) string {
+	switch r {
+	case "s":
+		return "safe"
+	case "q":
+		return "questionable"
+	case "e":
+		return "explicit"
+	default:
+		return r
+	}
+}
+
 func FlattenPosts(resp PostsResponse) []fetcher.MetaData {
 	out := make([]fetcher.MetaData, 0, len(resp.Posts))
 
@@ -125,6 +138,7 @@ func FlattenPosts(resp PostsResponse) []fetcher.MetaData {
 			Hash:            post.File.MD5,
 			Link:            post.File.URL,
 			Score:           post.Score.Total,
+			Rating:          normalizeRating(post.Rating),
 		})
 	}
 

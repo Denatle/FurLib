@@ -38,6 +38,28 @@ _PREVIEW_WIDTH              = 42
 _BAR_WIDTH                  = 28   # fixed progress bar character width
 
 
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _parse_source_tags(raw: str) -> dict:
+    """Parse 'e621:order:score -animated; gelbooru:sort:score' into a dict."""
+    result = {}
+    for part in raw.split(";"):
+        part = part.strip()
+        if ":" not in part:
+            continue
+        source, _, tags_raw = part.partition(":")
+        source = source.strip()
+        tags   = tags_raw.strip().split()
+        if source and tags:
+            result[source] = tags
+    return result
+
+
+def _fmt_source_tags(st: dict) -> str:
+    """Inverse of _parse_source_tags."""
+    return "; ".join(f"{src}:{' '.join(tags)}" for src, tags in st.items())
+
+
 # ── API helpers ────────────────────────────────────────────────────────────────
 
 def api_get(path: str, params: dict | None = None) -> dict:
@@ -162,21 +184,34 @@ class LibraryTab(Widget):
         Binding("d",     "download",       "Download"),
     ]
 
-    _posts: list[dict]
-    _sort:  str
+    _posts:        list[dict]
+    _sort:         str
+    _animated:     str   # "all" | "animated" | "static"
+    _ratings:      set   # subset of {"safe","questionable","explicit"}; empty = all
     _preview_open: bool
+
+    _ALL_RATINGS = ("safe", "questionable", "explicit")
 
     def compose(self) -> ComposeResult:
         with Vertical():
             with Horizontal(id="search-bar"):
-                yield Input(placeholder="tags  e.g. fox rating:safe", id="tag-input")
-                yield Input(placeholder="limit/source", id="limit-input", value="20")
+                yield Input(placeholder="author (artist tag)", id="author-input")
+                yield Input(placeholder="tags  e.g. fox",      id="tag-input")
+                yield Input(placeholder="limit", id="limit-input", value="20")
                 yield Button("Search", variant="primary", id="search-btn")
             with Horizontal(id="sort-bar"):
-                yield Label("Sort:", id="sort-label")
-                yield Button("Newest", variant="primary", id="sort-newest")
-                yield Button("Oldest", variant="default", id="sort-oldest")
-                yield Button("Score",  variant="default", id="sort-score")
+                yield Label("Sort:",     id="sort-label")
+                yield Button("Newest",   variant="primary",  id="sort-newest")
+                yield Button("Oldest",   variant="default",  id="sort-oldest")
+                yield Button("Score",    variant="default",  id="sort-score")
+                yield Label("  Anim:",   id="anim-label")
+                yield Button("All",      variant="primary",  id="anim-all")
+                yield Button("Animated", variant="default",  id="anim-yes")
+                yield Button("Static",   variant="default",  id="anim-no")
+                yield Label("  Rating:", id="rating-label")
+                yield Button("S",  variant="default", id="rating-safe")
+                yield Button("Q",  variant="default", id="rating-questionable")
+                yield Button("E",  variant="default", id="rating-explicit")
             with Horizontal(id="lib-content"):
                 with Vertical(id="lib-left"):
                     yield DataTable(id="library-table", cursor_type="row")
@@ -186,6 +221,8 @@ class LibraryTab(Widget):
     def on_mount(self) -> None:
         self._posts        = []
         self._sort         = "newest"
+        self._animated     = "all"
+        self._ratings      = set()
         self._preview_open = False
         self.query_one("#image-preview").display = False
         t = self.query_one("#library-table", DataTable)
@@ -193,6 +230,7 @@ class LibraryTab(Widget):
         t.add_column("Source",  key="source")
         t.add_column("Post ID", key="post_id")
         t.add_column("Type",    key="type")
+        t.add_column("Rating",  key="rating")
         t.add_column("Size",    key="size")
         t.add_column("Score",   key="score")
         t.add_column("Tags",    key="tags")
@@ -202,26 +240,67 @@ class LibraryTab(Widget):
 
     @on(Button.Pressed, "#sort-newest")
     def _sort_newest(self) -> None: self._set_sort("newest")
-
     @on(Button.Pressed, "#sort-oldest")
     def _sort_oldest(self) -> None: self._set_sort("oldest")
-
     @on(Button.Pressed, "#sort-score")
     def _sort_score(self)  -> None: self._set_sort("score")
 
     def _set_sort(self, sort: str) -> None:
         self._sort = sort
-        for sid, lbl in [("sort-newest", "newest"), ("sort-oldest", "oldest"), ("sort-score", "score")]:
+        for sid, lbl in [("sort-newest","newest"),("sort-oldest","oldest"),("sort-score","score")]:
             self.query_one(f"#{sid}", Button).variant = "primary" if lbl == sort else "default"
+        self.action_refresh()
+
+    # ── animated filter ────────────────────────────────────────────────────────
+
+    @on(Button.Pressed, "#anim-all")
+    def _anim_all(self) -> None: self._set_animated("all")
+    @on(Button.Pressed, "#anim-yes")
+    def _anim_yes(self) -> None: self._set_animated("animated")
+    @on(Button.Pressed, "#anim-no")
+    def _anim_no(self)  -> None: self._set_animated("static")
+
+    def _set_animated(self, v: str) -> None:
+        self._animated = v
+        for sid, lbl in [("anim-all","all"),("anim-yes","animated"),("anim-no","static")]:
+            self.query_one(f"#{sid}", Button).variant = "primary" if lbl == v else "default"
+        self.action_refresh()
+
+    # ── rating filter (toggle) ─────────────────────────────────────────────────
+
+    @on(Button.Pressed, "#rating-safe")
+    def _rating_safe(self)         -> None: self._toggle_rating("safe")
+    @on(Button.Pressed, "#rating-questionable")
+    def _rating_questionable(self) -> None: self._toggle_rating("questionable")
+    @on(Button.Pressed, "#rating-explicit")
+    def _rating_explicit(self)     -> None: self._toggle_rating("explicit")
+
+    def _toggle_rating(self, r: str) -> None:
+        if r in self._ratings:
+            self._ratings.discard(r)
+        else:
+            self._ratings.add(r)
+        colors = {"safe": "green", "questionable": "yellow", "explicit": "red"}
+        for rid in ("safe", "questionable", "explicit"):
+            btn = self.query_one(f"#rating-{rid}", Button)
+            btn.variant = "primary" if rid in self._ratings else "default"
         self.action_refresh()
 
     # ── data ───────────────────────────────────────────────────────────────────
 
     @work(thread=True)
-    def load_posts(self, tags: str = "", limit: int = 20) -> None:
+    def load_posts(self, author: str = "", tags: str = "", limit: int = 20) -> None:
         params: dict = {"limit": limit, "sort": self._sort}
+        if author.strip():
+            params["author"] = author.strip()
         if tags.strip():
             params["tags"] = "+".join(tags.strip().split())
+        if self._animated == "animated":
+            params["animated"] = "true"
+        elif self._animated == "static":
+            params["animated"] = "false"
+        if self._ratings:
+            params["ratings"] = ",".join(self._ratings)
         try:
             posts = (api_get("/api/v1/library", params) or {}).get("data") or []
         except Exception as e:
@@ -231,6 +310,8 @@ class LibraryTab(Widget):
             return
         self.app.call_from_thread(self._populate, posts)
 
+    _RATING_COLOR = {"safe": "green", "questionable": "yellow", "explicit": "red"}
+
     def _populate(self, posts: list[dict]) -> None:
         self._posts = posts
         t = self.query_one("#library-table", DataTable)
@@ -239,11 +320,14 @@ class LibraryTab(Widget):
             size_kb = f"{(p.get('Size') or 0) // 1024} KB"
             tags    = p.get("Tags") or []
             preview = ", ".join(tags[:4]) + ("…" if len(tags) > 4 else "")
+            rating  = p.get("Rating") or ""
+            color   = self._RATING_COLOR.get(rating, "white")
             t.add_row(
                 str(p.get("ID", "")),
                 p.get("Source", ""),
                 p.get("PostID", ""),
                 p.get("Filetype", ""),
+                f"[{color}]{rating}[/{color}]" if rating else "",
                 size_kb,
                 str(p.get("Score", 0)),
                 preview,
@@ -255,16 +339,18 @@ class LibraryTab(Widget):
             self._load_preview_for_cursor()
 
     @on(Button.Pressed, "#search-btn")
+    @on(Input.Submitted, "#author-input, #tag-input, #limit-input")
     def on_search(self) -> None:
         self.action_refresh()
 
     def action_refresh(self) -> None:
-        tags = self.query_one("#tag-input", Input).value
+        author = self.query_one("#author-input", Input).value
+        tags   = self.query_one("#tag-input",    Input).value
         try:
             limit = int(self.query_one("#limit-input", Input).value or "20")
         except ValueError:
             limit = 20
-        self.load_posts(tags, limit)
+        self.load_posts(author, tags, limit)
 
     def on_stream_completed(self, _: StreamCompleted) -> None:
         self.action_refresh()
@@ -343,17 +429,20 @@ class NewJobModal(ModalScreen[dict | None]):
     def compose(self) -> ComposeResult:
         with Container(id="modal-container"):
             yield Static("[b]New Download Job[/b]", id="modal-title")
+            yield Input(placeholder="author (artist tag, e.g. kenket)", id="job-author")
             yield Input(placeholder="tags (e.g. fox rating:safe)", id="job-tags")
             yield Input(placeholder="limit per source (default 20)", id="job-limit", value="20")
             yield Input(placeholder="sources (comma sep., empty = all)", id="job-sources")
+            yield Input(placeholder='per-source tags  e.g. e621:order:score -animated', id="job-source-tags")
             with Horizontal(id="modal-buttons"):
                 yield Button("Create", variant="primary", id="create-btn")
                 yield Button("Cancel", variant="default", id="cancel-btn")
 
     @on(Button.Pressed, "#create-btn")
     def do_create(self) -> None:
-        tags_raw = self.query_one("#job-tags", Input).value.strip()
-        tags     = tags_raw.split() if tags_raw else ["fox"]
+        author   = self.query_one("#job-author", Input).value.strip()
+        tags_raw = self.query_one("#job-tags",   Input).value.strip()
+        tags     = tags_raw.split() if tags_raw else []
         try:
             limit = int(self.query_one("#job-limit", Input).value or "20")
         except ValueError:
@@ -361,8 +450,13 @@ class NewJobModal(ModalScreen[dict | None]):
         sources_raw = self.query_one("#job-sources", Input).value.strip()
         sources     = [s.strip() for s in sources_raw.split(",") if s.strip()]
         payload: dict = {"tags": tags, "limit": limit}
+        if author:
+            payload["author"] = author
         if sources:
             payload["sources"] = sources
+        st = _parse_source_tags(self.query_one("#job-source-tags", Input).value)
+        if st:
+            payload["source_tags"] = st
         self.dismiss(payload)
 
     @on(Button.Pressed, "#cancel-btn")
@@ -478,25 +572,32 @@ class JobsTab(Widget):
 
     def submit_preset(self, preset: dict) -> None:
         payload: dict = {"tags": preset.get("tags", []), "limit": preset.get("limit", 20)}
+        if preset.get("author"):
+            payload["author"] = preset["author"]
         if sources := preset.get("sources"):
             payload["sources"] = sources
+        if st := preset.get("source_tags"):
+            payload["source_tags"] = st
         self._submit(payload)
 
     @work(thread=True)
     def _submit(self, payload: dict) -> None:
         import uuid as _uuid
+        author  = payload.get("author", "")
         tags    = payload.get("tags", [])
         sources = payload.get("sources", [])
+        label   = author if author else " ".join(tags)
         rk = f"stream-{_uuid.uuid4().hex[:8]}"
         s: dict = {
             "done": 0, "total": 0, "failed": 0,
             "spin_idx": 0, "active": True,
-            "tags_str": " ".join(tags)[:28],
+            "tags_str": label[:28],
             "created":  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         }
         self._streams[rk] = s
         self.app.call_from_thread(self._insert_stub, rk, s)
-        self._stream(tags, payload.get("limit", 20), sources, rk)
+        self._stream(tags, payload.get("limit", 20), sources, author,
+                     payload.get("source_tags", {}), rk)
 
     def _insert_stub(self, rk: str, s: dict) -> None:
         self._add_stub(self.query_one("#jobs-table", DataTable), rk, s)
@@ -522,11 +623,16 @@ class JobsTab(Widget):
         self.load_jobs()
 
     @work(thread=True)
-    def _stream(self, tags: list[str], limit: int, sources: list[str], rk: str) -> None:
+    def _stream(self, tags: list[str], limit: int, sources: list[str],
+                author: str, source_tags: dict, rk: str) -> None:
         s = self._streams[rk]
         params: dict = {"tags": "+".join(tags), "limit": str(limit)}
+        if author:
+            params["author"] = author
         if sources:
             params["sources"] = ",".join(sources)
+        if source_tags:
+            params["source_tags"] = json.dumps(source_tags, separators=(",", ":"))
 
         def set_final(status: str) -> None:
             color = STATUS_COLOR.get(status, "white")
@@ -596,15 +702,19 @@ class PresetsTab(Widget):
                     yield Button("▶▶ Run All [a]", variant="success", id="run-all-btn")
             with Vertical(id="preset-form-panel"):
                 yield Static("[b]Preset details[/b]", id="form-title")
-                yield Label("Name",                            classes="form-label")
-                yield Input(placeholder="My fox collection",   id="preset-name")
-                yield Label("Tags (space separated)",          classes="form-label")
-                yield Input(placeholder="fox rating:safe",     id="preset-tags")
+                yield Label("Name",                              classes="form-label")
+                yield Input(placeholder="My fox collection",     id="preset-name")
+                yield Label("Author (artist tag)",               classes="form-label")
+                yield Input(placeholder="kenket",                id="preset-author")
+                yield Label("Tags (space separated)",            classes="form-label")
+                yield Input(placeholder="fox rating:safe",       id="preset-tags")
                 yield Label("Sources (comma sep., empty = all)", classes="form-label")
-                yield Input(placeholder="e621, gelbooru",      id="preset-sources")
-                yield Label("Limit per source",                    classes="form-label")
-                yield Input(placeholder="20", value="20",      id="preset-limit")
-                yield Button("Save", variant="primary",        id="save-preset-btn")
+                yield Input(placeholder="e621, gelbooru",        id="preset-sources")
+                yield Label("Per-source tags  e.g. e621:order:score -animated", classes="form-label")
+                yield Input(placeholder="e621:order:score; gelbooru:sort:score", id="preset-source-tags")
+                yield Label("Limit per source",                  classes="form-label")
+                yield Input(placeholder="20", value="20",        id="preset-limit")
+                yield Button("Save", variant="primary",          id="save-preset-btn")
                 yield Label("", id="preset-status")
 
     def on_mount(self) -> None:
@@ -650,22 +760,31 @@ class PresetsTab(Widget):
             self._fill_form(self._presets[idx])
 
     def _fill_form(self, p: dict) -> None:
-        self.query_one("#preset-name",    Input).value = p.get("name", "")
-        self.query_one("#preset-tags",    Input).value = " ".join(p.get("tags", []))
-        self.query_one("#preset-sources", Input).value = ", ".join(p.get("sources", []))
-        self.query_one("#preset-limit",   Input).value = str(p.get("limit", 20))
-        self.query_one("#preset-status",  Label).update("")
+        self.query_one("#preset-name",        Input).value = p.get("name", "")
+        self.query_one("#preset-author",      Input).value = p.get("author", "")
+        self.query_one("#preset-tags",        Input).value = " ".join(p.get("tags", []))
+        self.query_one("#preset-sources",     Input).value = ", ".join(p.get("sources", []))
+        self.query_one("#preset-source-tags", Input).value = _fmt_source_tags(p.get("source_tags", {}))
+        self.query_one("#preset-limit",       Input).value = str(p.get("limit", 20))
+        self.query_one("#preset-status",      Label).update("")
 
     def _form_to_dict(self) -> dict:
-        name    = self.query_one("#preset-name",    Input).value.strip()
-        tags    = self.query_one("#preset-tags",    Input).value.strip().split()
-        raw_src = self.query_one("#preset-sources", Input).value.strip()
+        name    = self.query_one("#preset-name",        Input).value.strip()
+        author  = self.query_one("#preset-author",      Input).value.strip()
+        tags    = self.query_one("#preset-tags",        Input).value.strip().split()
+        raw_src = self.query_one("#preset-sources",     Input).value.strip()
         sources = [s.strip() for s in raw_src.split(",") if s.strip()]
+        st      = _parse_source_tags(self.query_one("#preset-source-tags", Input).value)
         try:
             limit = int(self.query_one("#preset-limit", Input).value or "20")
         except ValueError:
             limit = 20
-        return {"name": name, "tags": tags, "sources": sources, "limit": limit}
+        d: dict = {"name": name, "tags": tags, "sources": sources, "limit": limit}
+        if author:
+            d["author"] = author
+        if st:
+            d["source_tags"] = st
+        return d
 
     # ── actions ────────────────────────────────────────────────────────────────
 
@@ -686,7 +805,8 @@ class PresetsTab(Widget):
 
     def action_new_preset(self) -> None:
         self._selected = -1
-        for fid in ("#preset-name", "#preset-tags", "#preset-sources"):
+        for fid in ("#preset-name", "#preset-author", "#preset-tags",
+                    "#preset-sources", "#preset-source-tags"):
             self.query_one(fid, Input).value = ""
         self.query_one("#preset-limit",  Input).value = "20"
         self.query_one("#preset-status", Label).update("")
@@ -830,8 +950,10 @@ CSS = """
 #search-bar Button { width: 12; }
 
 #sort-bar { height: 3; padding: 0 1; align: left middle; }
-#sort-label { margin-right: 1; color: $text-muted; }
+#sort-label, #anim-label, #rating-label { margin-right: 1; color: $text-muted; }
 #sort-bar Button { width: 10; margin-right: 1; }
+#anim-all, #anim-yes, #anim-no { width: 10; margin-right: 1; }
+#rating-safe, #rating-questionable, #rating-explicit { width: 3; margin-right: 1; }
 
 /* Library */
 #lib-content  { height: 1fr; }
