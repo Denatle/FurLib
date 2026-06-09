@@ -43,11 +43,12 @@ func NewFetcher(p Params) *Fetcher {
 		http: &http.Client{
 			Timeout: 2 * time.Minute,
 			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
 				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 					return (&net.Dialer{
 						Timeout:   30 * time.Second,
 						KeepAlive: 30 * time.Second,
-					}).DialContext(ctx, "tcp4", addr)
+					}).DialContext(ctx, "tcp", addr)
 				},
 			},
 		},
