@@ -2,7 +2,9 @@ package archivator
 
 import (
 	"FurLib/internal/config"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/glebarez/sqlite"
@@ -16,6 +18,12 @@ type Repository struct {
 }
 
 func NewRepository(log *zap.Logger, cfg config.ArchivatorConfig) (*Repository, error) {
+	if dir := filepath.Dir(cfg.DBPath); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create db dir: %w", err)
+		}
+	}
+
 	db, err := gorm.Open(sqlite.Open(cfg.DBPath), &gorm.Config{
 		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
 	})
