@@ -42,11 +42,12 @@ func NewClient(log *zap.Logger, cfg config.GelbooruConfig) *Client {
 		http: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
 				DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
 					return (&net.Dialer{
 						Timeout:   30 * time.Second,
 						KeepAlive: 30 * time.Second,
-					}).DialContext(ctx, "tcp4", addr)
+					}).DialContext(ctx, "tcp", addr)
 				},
 			},
 		},
